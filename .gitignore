@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+
+# pytest
+.pytest_cache/
+*.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Core dumps (from pwn debugging)
+core
+core.*
+
+# IDA / disassembler artifacts
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+
+# Editor temp files
+*.swp
+*.swo
+*~
+
+# Generated reports (optional — uncomment next line if reports/ is auto-generated)
+# reports/
+
+# Install log
+install.log
