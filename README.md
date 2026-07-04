@@ -69,7 +69,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourname/intelpwn.git
+git clone https://github.com/guaidao2/intelpwn.git
 cd intelpwn
 
 # 安装依赖 (Kali/Debian)
