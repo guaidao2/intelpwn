@@ -15,7 +15,7 @@ build/
 Thumbs.db
 
 # Core dumps (from pwn debugging)
-core
+/core
 core.*
 
 # IDA / disassembler artifacts
