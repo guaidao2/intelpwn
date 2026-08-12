@@ -112,7 +112,7 @@ python3 intelpwn.py analyze <binary> --json
 # 批量扫描目录下所有 ELF
 python3 intelpwn.py analyze --dir <目录> [--json]
 
-# 定点验证 (崩溃验证 + 边界测试 + 偏移定位, 原 fuzz 命令的别名)
+# 定点验证 = analyze --verify (静态 + 动态 + 交叉验证)
 python3 intelpwn.py verify <binary>
 
 # 抑制 exploit 自动生成
@@ -167,7 +167,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 │   └── angr_analysis.py             angr 插件 (主动发现/可达性/padding, 自注册)
 ├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v1.0)
 ├── intelpwn/core/exploit.py         exploit 模板生成器
-├── intelpwn/core/verify.py          定点验证 (原 fuzzer, 改名避免误导)
+├── intelpwn/core/verify.py          定点验证 (cyclic 偏移提取)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
 ├── challenges/                      8 道 CTF 练习题

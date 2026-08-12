@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/guaidao2/intelpwn/blob/main/schema/intelpwn.schema.json",
-  "title": "IntelPwn JSON 输出 schema v1.0",
+  "title": "IntelPwn JSON 输出 schema v1.1",
   "type": "object",
   "required": ["schema_version", "file", "path", "protections", "overflow", "format_string", "summary"],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0" },
+    "schema_version": { "type": "string", "const": "1.1" },
     "file": { "type": ["string", "null"] },
     "path": { "type": ["string", "null"] },
     "protections": {
@@ -51,6 +51,26 @@
               "detail": { "type": ["string", "null"] },
               "severity": { "type": ["string", "null"] },
               "exploitable": { "type": ["boolean", "null"] }
+            }
+          }
+        }
+      }
+    }
+    "cross_validation": {
+      "type": "object",
+      "properties": {
+        "verdict": { "type": ["string", "null"] },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": { "type": ["string", "null"] },
+              "static": { "type": ["string", "integer", "null"] },
+              "dynamic": { "type": ["string", "integer", "null"] },
+              "state": { "type": ["string", "null"],
+                         "enum": ["确认", "冲突", "未复现", "动态发现", "canary", "跳过", null] },
+              "note": { "type": ["string", "null"] }
             }
           }
         }

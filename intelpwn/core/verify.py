@@ -1,17 +1,18 @@
 """分析引导的定点验证器 — 基于 analyze 结果做针对性验证 (原 fuzzer)。
 
 名称说明: 本模块不是覆盖率引导的 fuzz 器, 而是对已分析出的漏洞做
-确定性验证: 栈溢出崩溃验证 + 边界值测试 + 格式化字符串偏移定位。
+确定性验证: cyclic 精确偏移提取 + 边界值测试 + 格式化字符串偏移定位。
 """
 
+import re
 import subprocess
 import tempfile
 import os
 from typing import Optional
 
 from pwn import cyclic, cyclic_find, p64, p32
+from intelpwn.utils.binary import run
 from intelpwn.utils.output import print_info, print_success, print_warning, Colors, print_error
-from intelpwn.core.analysis import analyze_all
 
 
 def fmtstr_offset_find(binary: str, max_probe: int = 40) -> Optional[int]:
@@ -29,93 +30,103 @@ def fmtstr_offset_find(binary: str, max_probe: int = 40) -> Optional[int]:
     return None
 
 
-def verify_by_analysis(binary: str, libc_path: str = None) -> tuple:
-    """基于分析结果进行定点验证
-    
+def cyclic_crash_offset(binary: str, bits: int = 64, pattern_len: int = 0x400) -> dict:
+    """cyclic 崩溃实验: 自动提取精确溢出偏移。
+
+    研究结论 (实证):
+      - 主流崩溃模式是 saved rbp 被覆盖后 epilogue 走坏 rbp,
+        gdb 的 rip 显示 ret 指令本身 → cyclic_find(rip) 恒失败;
+        但崩溃时 $rsp 正指向返回地址槽, 里面的 cyclic 字节能被精确命中。
+      - canary 靶子: SIGABRT + "stack smashing detected" + rip 在 libc → canary_hit。
+    提取顺序: $rsp 指向值 → $rip → canary 指纹 → 未命中。
+
     Returns:
-        (findings, results) — findings 为人类可读列表, results 为分析 dict
+        {crash, signal, canary_hit, cyclic_offset, rip}
     """
-    print_info("运行全量分析以获取目标信息...")
-    results = analyze_all(binary, libc_path)
+    n = 8 if bits == 64 else 4
+    pat = cyclic(pattern_len, n=n)
+    cf = tempfile.NamedTemporaryFile(delete=False)
+    cf.write(pat)
+    cf.close()
 
-    findings = []
-    arch = results.get("protections", {}).get("arch", "x64")
+    gs = f"""set pagination off
+file {binary}
+run < {cf.name}
+set $rspval = *(unsigned long long*)$rsp
+printf "CRASH-MARK RIP=%#llx RSPVAL=%#llx RBP=%#llx\\n", $rip, $rspval, $rbp
+quit"""
+    sf = tempfile.NamedTemporaryFile(mode="w", delete=False)
+    sf.write(gs)
+    sp = sf.name
+    sf.close()
+
+    try:
+        rc, out, _ = run(["gdb", "-batch", "-x", sp], timeout=15)
+    finally:
+        os.unlink(cf.name)
+        os.unlink(sp)
+
+    crash = rc is not None and rc < 0 or "CRASH-MARK" in out
+    sig = None
+    m = re.search(r'Program received signal (\S+)', out)
+    if m:
+        sig = m.group(1)
+    smashing = "stack smashing detected" in out
+
+    rip = rspval = 0
+    m = re.search(r'CRASH-MARK RIP=(0x[0-9a-f]+) RSPVAL=(0x[0-9a-f]+) RBP=(0x[0-9a-f]+)', out)
+    if m:
+        rip, rspval, _ = (int(x, 16) for x in m.groups())
+
+    canary_hit = smashing or sig == "SIGABRT" or (0x7f0000000000 <= rip < 0x800000000000)
+
+    offset = None
+    pack = p64 if bits == 64 else p32
+    if rspval:
+        off = cyclic_find(pack(rspval), n=n)
+        if off is not None and off >= 0:
+            offset = off
+    if offset is None and rip:
+        off = cyclic_find(pack(rip), n=n)
+        if off is not None and off >= 0:
+            offset = off
+
+    return {"crash": crash, "signal": sig, "canary_hit": bool(canary_hit),
+            "cyclic_offset": offset, "rip": rip}
+
+
+def verify_dynamic(binary: str, results: dict) -> dict:
+    """动态验证 (不重复 analyze_all, 直接消费已计算的 results)
+
+    Returns:
+        {overflow_crash, fmtstr_offset, boundary_crash}
+    """
     bits = results.get("protections", {}).get("bits", 64)
+    out = {"overflow_crash": None, "fmtstr_offset": None, "boundary_crash": None}
 
-    # ── 1. 栈溢出验证 ──
+    # 1. 栈溢出: cyclic 精确偏移提取
     so_list = results.get("overflow", [])
     if so_list:
-        so = so_list[0]
-        padding = so.get("calculated_padding", 0)
-        func = so.get("function", "?")
-        print_info(f"验证栈溢出 (padding={padding}, 函数={func})...")
+        func = so_list[0].get("function", "?")
+        print_info(f"cyclic 验证栈溢出 (函数={func})...")
+        out["overflow_crash"] = cyclic_crash_offset(binary, bits)
+        c = out["overflow_crash"]
+        if c.get("cyclic_offset") is not None:
+            print_success(f"  动态偏移: {c['cyclic_offset']}")
+        elif c.get("canary_hit"):
+            print_warning("  canary 拦截 (stack smashing), 需先泄露 canary")
+        elif c.get("crash"):
+            print_warning(f"  崩溃 ({c.get('signal')}) 但未提取到偏移")
+        else:
+            print_warning("  未崩溃")
 
-        test_payload = b"A" * padding + b"BBBBBBBB"
-        try:
-            r = subprocess.run([binary], input=test_payload + b"\n",
-                               capture_output=True, timeout=3)
-            if r.returncode < 0:
-                sig = -r.returncode
-
-                crash_file = tempfile.NamedTemporaryFile(delete=False)
-                crash_path = crash_file.name
-                crash_file.write(test_payload)
-                crash_file.close()
-
-                gdb_script = f"""set pagination off
-file {binary}
-run < {crash_path}
-info registers rip rsp
-quit"""
-                sf = tempfile.NamedTemporaryFile(mode="w", delete=False)
-                sf.write(gdb_script)
-                spath = sf.name
-                sf.close()
-
-                rc, out, _ = subprocess.run(["gdb", "-batch", "-x", spath],
-                                            capture_output=True, text=True, timeout=10)
-                os.unlink(crash_path)
-                os.unlink(spath)
-
-                rip_val = 0
-                for line in out.splitlines():
-                    p = line.strip().split()
-                    if p and p[0] in ('rip', 'eip') and len(p) >= 2:
-                        try:
-                            rip_val = int(p[1], 16)
-                        except ValueError:
-                            pass
-
-                findings.append({
-                    "类型": "栈溢出验证",
-                    "严重度": "严重",
-                    "详情": f"padding={padding}, 函数={func}, RIP={'0x%x' % rip_val if rip_val else '已控制'} (signal={sig})"
-                })
-                print_success(f"  RIP 被控制: 0x{rip_val:x}" if rip_val else f"  signal={sig}, 崩毁确认")
-            else:
-                print_warning(f"  padding={padding} 未造成崩毁")
-        except OSError:
-            print_error(f"  无法执行 {binary}")
-
-    # ── 2. 格式化字符串偏移定位 ──
+    # 2. 格式化字符串偏移定位
     fs = results.get("format_string", {})
     if fs.get("vulnerable"):
         print_info("定位格式化字符串偏移...")
-        off = fmtstr_offset_find(binary)
-        if off:
-            findings.append({
-                "类型": "格式化字符串偏移",
-                "严重度": "高危",
-                "详情": f"偏移={off}, 可用 %{off}$p 泄露, %{off}$n 写入"
-            })
-        else:
-            findings.append({
-                "类型": "格式化字符串确认",
-                "严重度": "中危",
-                "详情": "存在漏洞但未自动定位偏移, 可手动尝试更多偏移值"
-            })
+        out["fmtstr_offset"] = fmtstr_offset_find(binary)
 
-    # ── 3. 边界值测试 (针对 read/gets) ──
+    # 3. 边界值测试 (针对 read/gets)
     plt = results.get("plt", {})
     danger_inputs = [n for n, a in plt.items() if n in ('read', 'gets', 'scanf', 'fgets')]
     if danger_inputs:
@@ -126,14 +137,10 @@ quit"""
                 r = subprocess.run([binary], input=payload + b"\n",
                                    capture_output=True, timeout=2)
                 if r.returncode < 0:
-                    findings.append({
-                        "类型": "边界崩毁",
-                        "严重度": "高危",
-                        "详情": f"size={sz} 触发 signal={-r.returncode}"
-                    })
+                    out["boundary_crash"] = {"size": sz, "signal": -r.returncode}
                     print_warning(f"  size={sz} → SIG{-r.returncode}")
                     break
             except Exception:
                 pass
 
-    return findings, results
+    return out

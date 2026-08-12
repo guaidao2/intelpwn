@@ -362,6 +362,28 @@ def print_results(results: dict, binary: str):
                       f"静态={pc.get('static_padding')} vs angr={pc.get('angr_padding')}")
 
     # ═══════════════════════════════════════════════
+    # 9.6 交叉验证 (静态 vs 动态)
+    # ═══════════════════════════════════════════════
+    cross = results.get("cross_validation")
+    if cross:
+        print(f"  │")
+        print(f"  ├─ 交叉验证 (静态 vs 动态) ─────────────────")
+        STATE_TAG = {
+            "确认": f"{Colors.GREEN}[确认]{Colors.END}",
+            "冲突": f"{Colors.RED}[冲突]{Colors.END}",
+            "未复现": f"{Colors.YELLOW}[未复现]{Colors.END}",
+            "动态发现": f"{Colors.RED}[动态发现]{Colors.END}",
+            "canary": f"{Colors.YELLOW}[canary拦截]{Colors.END}",
+            "跳过": f"{Colors.CYAN}[跳过]{Colors.END}",
+        }
+        for e in cross.get("entries", []):
+            tag = STATE_TAG.get(e.get("state"), f"{SEV['信息']}")
+            note = e.get("note") or ""
+            print(f"  │  {tag} {e.get('item')}: 静态={e.get('static')} 动态={e.get('dynamic')}"
+                  + (f" ({note})" if note else ""))
+        print(f"  │  结论: {cross.get('verdict')}")
+
+    # ═══════════════════════════════════════════════
     # 10. 综合发现
     # ═══════════════════════════════════════════════
     print(f"  │")
@@ -411,7 +433,7 @@ def print_json_summary(results: dict) -> str:
         return v
 
     summary = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "file": results.get("file"),
         "path": results.get("path"),
         "protections": {
@@ -443,6 +465,19 @@ def print_json_summary(results: dict) -> str:
                     "exploitable": f.get("exploitable"),
                 }
                 for f in results.get("summary", {}).get("items", [])
+            ],
+        },
+        "cross_validation": {
+            "verdict": results.get("cross_validation", {}).get("verdict"),
+            "entries": [
+                {
+                    "item": e.get("item"),
+                    "static": e.get("static"),
+                    "dynamic": e.get("dynamic"),
+                    "state": e.get("state"),
+                    "note": e.get("note"),
+                }
+                for e in results.get("cross_validation", {}).get("entries", [])
             ],
         },
     }

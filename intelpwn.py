@@ -41,7 +41,6 @@ from intelpwn.utils.output import (
 from intelpwn.core.analysis import analyze_all
 from intelpwn.core.report import print_results, print_json_summary
 from intelpwn.core.exploit import generate as gen_exploit
-from intelpwn.core.verify import verify_by_analysis
 
 
 def _is_elf(path: str) -> bool:
@@ -126,11 +125,36 @@ def cmd_analyze(args):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             results = analyze_all(path, args.libc)
+            # --verify: 动态验证 + 交叉验证也纳入 JSON
+            verify_on = bool(getattr(args, 'verify', False)) and not getattr(args, 'no_verify', False)
+            if args.remote:
+                verify_on = False
+            if verify_on and os.access(path, os.X_OK):
+                from intelpwn.core.verify import verify_dynamic
+                from intelpwn.core.cross_validate import cross_validate
+                dynamic = verify_dynamic(path, results)
+                results["dynamic"] = dynamic
+                results["cross_validation"] = cross_validate(results, dynamic)
         print(print_json_summary(results))
         return
 
     print_section_header(f"分析目标: {os.path.basename(path)}")
     results = analyze_all(path, args.libc)
+
+    # 动态验证 + 交叉验证 (--verify 默认关; --remote/不可执行时自动跳过)
+    verify_on = bool(getattr(args, 'verify', False)) and not getattr(args, 'no_verify', False)
+    if args.remote:
+        verify_on = False
+    if verify_on and os.access(path, os.X_OK):
+        from intelpwn.core.verify import verify_dynamic
+        from intelpwn.core.cross_validate import cross_validate
+        print_info("执行动态验证 (cyclic 偏移提取 + 边界测试 + fmtstr 偏移)...")
+        dynamic = verify_dynamic(path, results)
+        results["dynamic"] = dynamic
+        results["cross_validation"] = cross_validate(results, dynamic)
+        print_section_header("交叉验证 (静态 vs 动态)")
+    elif verify_on:
+        print_warning("目标不可执行, 跳过动态验证 (仅静态分析)")
 
     # 报告
     print_results(results, path)
@@ -153,40 +177,11 @@ def cmd_analyze(args):
 
 
 def cmd_verify(args):
-    """分析引导的定点验证 (崩溃验证 + 边界测试 + 偏移定位)"""
-    path = args.binary
-    if not os.path.exists(path):
-        print(f"{Colors.RED}[错误]{Colors.END} 文件不存在: {path}")
-        return
-
-    print_section_header(f"Verify: {os.path.basename(path)}")
-    findings, results = verify_by_analysis(path, args.libc)
-
-    # exploit 生成 (仅在分析出可利用漏洞时)
-    has_overflow = bool(results.get("overflow"))
-    has_fmtstr = bool(results.get("format_string", {}).get("vulnerable"))
-    has_angr = bool(results.get("angr_check", {}).get("discovered"))
-    if args.libc or ((has_overflow or has_fmtstr or has_angr) and not args.no_exploit):
-        libc_path = args.libc
-        if libc_path and not os.path.exists(libc_path):
-            print(f"{Colors.YELLOW}[警告]{Colors.END} libc 文件不存在: {libc_path}")
-            libc_path = None
-        gen_exploit(results, path, libc_path, args.remote)
-
-    print()
-    print(f"  {Colors.BOLD}[验证发现]{Colors.END}")
-    if findings:
-        for f in findings:
-            sev = f.get("严重度", "信息")
-            tag = {"严重": f"{Colors.RED}[严重]{Colors.END}",
-                   "高危": f"{Colors.RED}[高危]{Colors.END}",
-                   "中危": f"{Colors.YELLOW}[中危]{Colors.END}"}.get(sev, f"{Colors.CYAN}[信息]{Colors.END}")
-            print(f"  {tag} {f['类型']}: {f['详情']}")
-    else:
-        print(f"  {Colors.CYAN}[信息]{Colors.END} 未发现异常")
-
-    print()
-    print_results(results, path)
+    """定点验证 — analyze --verify 的别名 (静态 + 动态 + 交叉验证)"""
+    args.verify = True
+    args.no_verify = False
+    args.dir = None
+    cmd_analyze(args)
 
 
 def main():
@@ -198,13 +193,16 @@ def main():
     p.add_argument("--dir", help="批量扫描目录下所有 ELF 文件")
     p.add_argument("--libc", help="指定 libc 文件路径 (生成 exploit)")
     p.add_argument("--remote", help="远程目标地址 host:port")
+    p.add_argument("--verify", action="store_true", help="执行动态验证 + 交叉验证 (默认关)")
+    p.add_argument("--no-verify", action="store_true", help="显式关闭动态验证")
     p.add_argument("--json", action="store_true", help="以 JSON 格式输出结果")
     p.add_argument("--no-exploit", action="store_true", help="不自动生成 exploit 脚本")
 
-    p = sub.add_parser("verify", aliases=["fuzz"], help="定点验证 (崩溃/边界/偏移)")
+    p = sub.add_parser("verify", help="定点验证 = analyze --verify (静态+动态+交叉)")
     p.add_argument("binary", help="目标二进制路径")
     p.add_argument("--libc", help="指定 libc 文件路径 (生成 exploit)")
     p.add_argument("--remote", help="远程目标地址 host:port")
+    p.add_argument("--json", action="store_true", help="以 JSON 格式输出结果")
     p.add_argument("--no-exploit", action="store_true", help="不自动生成 exploit 脚本")
 
     args = parser.parse_args()
@@ -218,7 +216,7 @@ def main():
         print_banner()
     match args.command:
         case "analyze": cmd_analyze(args)
-        case "verify" | "fuzz": cmd_verify(args)
+        case "verify": cmd_verify(args)
 
 
 if __name__ == "__main__":
