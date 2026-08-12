@@ -62,7 +62,9 @@ def _read_string(path: str, vaddr: int) -> str:
             f.seek(off)
             raw = f.read(64).split(b'\x00')[0]
         # 滤控制字节 (恶意二进制可能注入 ANSI/OSC 转义到终端)
-        return ''.join(chr(b) for b in raw if b >= 0x20 or b in (0x09, 0x0a, 0x0d))
+        # 保留可打印 ASCII + \t\n\r; 滤 C0 (0x00-0x1f) 与 C1 (0x80-0x9f, UTF-8 下会重编码为 CSI/OSC)
+        return ''.join(chr(b) for b in raw
+                       if (0x20 <= b <= 0x7e) or b in (0x09, 0x0a, 0x0d))
     except Exception:
         return ""
 
