@@ -143,19 +143,20 @@ def _scan_int_overflow(path: str, results: dict, insns=None, bits=None) -> list:
 
 
 # 主动发现: 需要 angr 验证的危险输入函数
-#   函数 → (类型, 大小参数寄存器 x64)  type: bounded=有大小参数, unbounded=无界写
+#   函数 → (类型, 大小参数寄存器 x64, 缓冲/目标寄存器 x64)
+#   注意: read/recv 的缓冲在 rsi (rdi 是 fd); 其余函数的第一个参数在 rdi
 _DISCOVER_FUNCS = {
-    'read':    ('bounded', 'rdx'),
-    'recv':    ('bounded', 'rdx'),
-    'fgets':   ('bounded', 'rsi'),
-    'memcpy':  ('bounded', 'rdx'),
-    'strncpy': ('bounded', 'rdx'),
-    'snprintf': ('bounded', 'rsi'),
-    'gets':    ('unbounded', None),
-    'strcpy':  ('unbounded', None),
-    'sprintf': ('unbounded', None),
-    'strcat':  ('unbounded', None),
-    'scanf':   ('unbounded', None),
+    'read':    ('bounded', 'rdx', 'rsi'),   # (fd, buf, size)
+    'recv':    ('bounded', 'rdx', 'rsi'),   # (fd, buf, size, flags)
+    'fgets':   ('bounded', 'rsi', 'rdi'),   # (buf, size, stream)
+    'memcpy':  ('bounded', 'rdx', 'rdi'),   # (dst, src, size)
+    'strncpy': ('bounded', 'rdx', 'rdi'),   # (dst, src, size)
+    'snprintf': ('bounded', 'rsi', 'rdi'),  # (buf, size, fmt, ...)
+    'gets':    ('unbounded', None, 'rdi'),
+    'strcpy':  ('unbounded', None, 'rdi'),
+    'sprintf': ('unbounded', None, 'rdi'),
+    'strcat':  ('unbounded', None, 'rdi'),
+    'scanf':   ('unbounded', None, 'rdi'),
 }
 
 
@@ -222,7 +223,7 @@ def _angr_discover(path: str, results: dict, max_sites: int = 20) -> dict:
             break
 
         call_addr = insn.address
-        kind, size_reg = _DISCOVER_FUNCS[callee]
+        kind, size_reg, buf_reg = _DISCOVER_FUNCS[callee]
 
         # 可达性
         try:
@@ -239,10 +240,9 @@ def _angr_discover(path: str, results: dict, max_sites: int = 20) -> dict:
         entry = {"callee": callee, "call_addr": hex(call_addr),
                  "static_detected": call_addr in static_calls}
 
-        # 第一个参数 = 目标/缓冲地址
+        # 缓冲/目标地址: read/recv 在 rsi, 其余在 rdi
         try:
-            buf = st.solver.eval(st.regs.rdi)
-            rbp = st.solver.eval(st.regs.rbp)
+            buf = st.solver.eval(st.regs.__getattr__(buf_reg))
             on_stack = 0x7f0000000000 <= buf < 0x800000000000
         except Exception:
             continue
@@ -289,6 +289,9 @@ def _angr_discover(path: str, results: dict, max_sites: int = 20) -> dict:
         call_addr = _extract_call_addr(so.get("dangerous_call", ""))
         if call_addr is None:
             continue
+        # 从 dangerous_call 文本取 callee 名, 查缓冲寄存器 (read/recv 在 rsi)
+        callee = (so.get("dangerous_call", "").split("(")[0].strip() or "read")
+        _, _, buf_reg = _DISCOVER_FUNCS.get(callee, ('bounded', 'rdx', 'rdi'))
         try:
             proj = angr.Project(path, auto_load_libs=False)
             state = proj.factory.full_init_state()
@@ -297,7 +300,7 @@ def _angr_discover(path: str, results: dict, max_sites: int = 20) -> dict:
             if not simgr.found:
                 continue
             st = simgr.found[0]
-            buf = st.solver.eval(st.regs.rdi)
+            buf = st.solver.eval(st.regs.__getattr__(buf_reg))
             angr_pad = _compute_padding(st, buf)
             if angr_pad is None:
                 continue
