@@ -142,6 +142,180 @@ def _scan_int_overflow(path: str, results: dict, insns=None, bits=None) -> list:
     return findings
 
 
+# 主动发现: 需要 angr 验证的危险输入函数
+#   函数 → (类型, 大小参数寄存器 x64)  type: bounded=有大小参数, unbounded=无界写
+_DISCOVER_FUNCS = {
+    'read':    ('bounded', 'rdx'),
+    'recv':    ('bounded', 'rdx'),
+    'fgets':   ('bounded', 'rsi'),
+    'memcpy':  ('bounded', 'rdx'),
+    'strncpy': ('bounded', 'rdx'),
+    'snprintf': ('bounded', 'rsi'),
+    'gets':    ('unbounded', None),
+    'strcpy':  ('unbounded', None),
+    'sprintf': ('unbounded', None),
+    'strcat':  ('unbounded', None),
+    'scanf':   ('unbounded', None),
+}
+
+
+def _compute_padding(st, buf: int, max_off: int = 0x400):
+    """从 buf 向上扫描栈内存: 找到 saved rbp (栈指针) + 返回地址 (代码地址) 特征。
+
+    跨帧场景 (子函数内 strcpy 覆盖调用者的缓冲) 也正确:
+    返回地址槽 = buf + off + 8, padding = off + 8。
+    """
+    for off in range(0, max_off, 8):
+        try:
+            # 必须显式 Iend_LE: 默认 load 端序会返回字节反转的值
+            q = st.solver.eval(st.memory.load(buf + off, 8, endness='Iend_LE'))
+            r = st.solver.eval(st.memory.load(buf + off + 8, 8, endness='Iend_LE'))
+        except Exception:
+            break
+        # q = 栈指针 (saved rbp), r = 非栈的代码地址 (返回地址; 排除 libc/ld 0x7f...)
+        if 0x7f0000000000 <= q < 0x800000000000 and 0x400000 <= r < 0x7f0000000000:
+            return off + 8
+    return None
+
+
+def _angr_discover(path: str, results: dict, max_sites: int = 20) -> dict:
+    """主动发现: 枚举二进制中所有危险输入函数调用点, 符号执行验证
+
+    对每个可达调用点检查:
+      - 目标地址是否落在栈上 (第一个参数 rdi)
+      - 无界写 (strcpy/gets/...) 目标为栈 → 溢出, 用 angr 状态算 padding
+      - 有界读 (read/fgets/...) 大小参数是否符号化 (可控) / 超过栈缓冲
+    返回 {discovered: [...], static_verified: [...], padding_crosscheck: [...]}
+    """
+    from .overflow import disassemble_text
+
+    pre = disassemble_text(path)
+    if not pre:
+        return {"discovered": [], "static_verified": [], "padding_crosscheck": []}
+    insns, bits = pre[0], pre[1]
+
+    try:
+        from pwn import ELF
+        plt_map = {v: k for k, v in ELF(path, checksec=False).plt.items()}
+    except Exception:
+        plt_map = {}
+
+    static_calls = set()
+    for so in results.get("overflow", []):
+        a = _extract_call_addr(so.get("dangerous_call", ""))
+        if a:
+            static_calls.add(a)
+
+    discovered, verified = [], []
+    sites = 0
+    for i, insn in enumerate(insns):
+        if insn.mnemonic != 'call':
+            continue
+        try:
+            callee = plt_map.get(int(insn.op_str, 16), "")
+        except (ValueError, TypeError):
+            continue
+        if callee not in _DISCOVER_FUNCS:
+            continue
+        sites += 1
+        if sites > max_sites:
+            break
+
+        call_addr = insn.address
+        kind, size_reg = _DISCOVER_FUNCS[callee]
+
+        # 可达性
+        try:
+            proj = angr.Project(path, auto_load_libs=False)
+            state = proj.factory.full_init_state()
+            simgr = proj.factory.simulation_manager(state)
+            simgr.explore(find=call_addr, num_find=1, timeout=30)
+        except Exception:
+            continue
+        if not simgr.found:
+            continue  # 不可达, 跳过
+        st = simgr.found[0]
+
+        entry = {"callee": callee, "call_addr": hex(call_addr),
+                 "static_detected": call_addr in static_calls}
+
+        # 第一个参数 = 目标/缓冲地址
+        try:
+            buf = st.solver.eval(st.regs.rdi)
+            rbp = st.solver.eval(st.regs.rbp)
+            on_stack = 0x7f0000000000 <= buf < 0x800000000000
+        except Exception:
+            continue
+        entry["buf_addr"] = hex(buf)
+
+        if kind == 'unbounded':
+            # 无界写: 目标在栈上 → 溢出点
+            if not on_stack:
+                continue
+            padding = _compute_padding(st, buf)
+            entry.update({"vuln": "unbounded_write", "stack_buf": True})
+            if padding is not None:
+                entry["padding"] = padding
+            if call_addr in static_calls:
+                verified.append(entry)
+            else:
+                entry["discovered_by"] = "angr"
+                discovered.append(entry)
+        else:
+            # 有界读: 大小符号化检查
+            try:
+                sz_expr = st.regs.__getattr__(size_reg)
+                symbolic = st.solver.is_symbolic(sz_expr)
+                maxv = st.solver.max(sz_expr) if symbolic else st.solver.eval(sz_expr)
+            except Exception:
+                continue
+            dangerous = on_stack and (symbolic or maxv > 0x100)
+            entry.update({"vuln": "bounded_read", "size_symbolic": symbolic,
+                          "size_max": maxv, "stack_buf": on_stack})
+            if dangerous:
+                if on_stack:
+                    pad = _compute_padding(st, buf)
+                    if pad is not None:
+                        entry["padding"] = pad
+                if call_addr in static_calls:
+                    verified.append(entry)
+                else:
+                    entry["discovered_by"] = "angr"
+                    discovered.append(entry)
+
+    # 符号化 padding 交叉确认 (静态已检出 + angr 可达的调用点)
+    padding_crosscheck = []
+    for so in results.get("overflow", []):
+        call_addr = _extract_call_addr(so.get("dangerous_call", ""))
+        if call_addr is None:
+            continue
+        try:
+            proj = angr.Project(path, auto_load_libs=False)
+            state = proj.factory.full_init_state()
+            simgr = proj.factory.simulation_manager(state)
+            simgr.explore(find=call_addr, num_find=1, timeout=30)
+            if not simgr.found:
+                continue
+            st = simgr.found[0]
+            buf = st.solver.eval(st.regs.rdi)
+            angr_pad = _compute_padding(st, buf)
+            if angr_pad is None:
+                continue
+        except Exception:
+            continue
+        static_pad = so.get("calculated_padding", 0)
+        if abs(angr_pad - static_pad) > 0 and angr_pad > 0:
+            padding_crosscheck.append({
+                "function": so.get("function"),
+                "static_padding": static_pad,
+                "angr_padding": angr_pad,
+                "mismatch": True,
+            })
+
+    return {"discovered": discovered, "static_verified": verified,
+            "padding_crosscheck": padding_crosscheck}
+
+
 def _analyze_angr(path: str, results: dict) -> dict:
     """angr 扩展分析主入口 (插件签名: fn(path, results) -> dict)"""
     if not _HAVE_ANGR:
@@ -151,7 +325,7 @@ def _analyze_angr(path: str, results: dict) -> dict:
     bits = results.get("protections", {}).get("bits", 64)
     overflow = results.get("overflow", [])
 
-    # 1. 溢出调用点可达性 + 大小符号化检查
+    # 1. 溢出调用点可达性 + 大小符号化检查 (静态已检出的)
     checks = []
     for so in overflow:
         call_addr = _extract_call_addr(so.get("dangerous_call", ""))
@@ -168,9 +342,11 @@ def _analyze_angr(path: str, results: dict) -> dict:
         checks.append(entry)
     out["checks"] = checks
 
-    # 2. 整数溢出线索 (静态)
-    int_ov = _scan_int_overflow(path, results)
-    out["int_overflow"] = int_ov
+    # 2. 主动发现: 全量枚举危险调用点 (含静态漏检的)
+    out.update(_angr_discover(path, results))
+
+    # 3. 整数溢出线索 (静态)
+    out["int_overflow"] = _scan_int_overflow(path, results)
 
     return out
 

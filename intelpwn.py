@@ -135,10 +135,11 @@ def cmd_analyze(args):
     # 报告
     print_results(results, path)
 
-    # exploit 生成 (--libc 或 有栈溢出/格式化字符串时自动生成)
+    # exploit 生成 (--libc 或 有栈溢出/格式化字符串/angr主动发现时自动生成)
     has_overflow = bool(results.get("overflow"))
     has_fmtstr = bool(results.get("format_string", {}).get("vulnerable"))
-    if args.libc or ((has_overflow or has_fmtstr) and not args.no_exploit):
+    has_angr = bool(results.get("angr_check", {}).get("discovered"))
+    if args.libc or ((has_overflow or has_fmtstr or has_angr) and not args.no_exploit):
         libc_path = args.libc
         if libc_path and not os.path.exists(libc_path):
             print(f"{Colors.YELLOW}[警告]{Colors.END} libc 文件不存在: {libc_path}")
@@ -164,7 +165,8 @@ def cmd_verify(args):
     # exploit 生成 (仅在分析出可利用漏洞时)
     has_overflow = bool(results.get("overflow"))
     has_fmtstr = bool(results.get("format_string", {}).get("vulnerable"))
-    if args.libc or ((has_overflow or has_fmtstr) and not args.no_exploit):
+    has_angr = bool(results.get("angr_check", {}).get("discovered"))
+    if args.libc or ((has_overflow or has_fmtstr or has_angr) and not args.no_exploit):
         libc_path = args.libc
         if libc_path and not os.path.exists(libc_path):
             print(f"{Colors.YELLOW}[警告]{Colors.END} libc 文件不存在: {libc_path}")

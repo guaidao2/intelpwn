@@ -90,6 +90,18 @@ def generate_findings(result: dict) -> dict:
             "exploitable": False,
         })
 
+    # angr 主动发现 (静态漏检的漏洞点)
+    for d in angr_res.get("discovered", []):
+        if d.get("static_detected"):
+            continue  # 静态已报过
+        pad = f", padding~{d['padding']}" if 'padding' in d else ""
+        findings.append({
+            "type": "angr 主动发现",
+            "detail": f"{d.get('callee')} @ {d.get('call_addr')} 目标在栈上{pad}",
+            "severity": "高危",
+            "exploitable": 'padding' in d,
+        })
+
     return {
         "count": len(findings),
         "max_severity": severity,

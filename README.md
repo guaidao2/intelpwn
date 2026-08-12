@@ -36,7 +36,7 @@
 | **BSS 可写区** | ELF 符号表扫描大尺寸 BSS 符号 | 用于 shellcode 存储 |
 | **CFG 复杂度** | 指令流直接计数边和节点 (去 NetworkX) | 5ms vs 500ms |
 | **堆漏洞线索** | 同函数多 free (double-free) / malloc 大小算术运算 (整数溢出) / 循环内 free (UAF 场景) | 启发式提示 |
-| **angr 符号执行** | 溢出调用点可达性 + 大小参数符号化验证 (确认/降置信度) + 整数溢出静态扫描 | 可选插件 |
+| **angr 符号执行** | 主动发现: 全量枚举危险调用点 (可达性 + 栈目标 + 大小 taint), 静态漏检的 strcpy 等无界写也能发现并算 padding; 溢出点符号化 padding 交叉确认 | 可选插件 |
 | **利用策略生成** | 基于保护状态 + 可用函数 + ROP → 自动推导方案 | 多种策略 |
 
 ### Exploit 生成
@@ -46,12 +46,12 @@
 | **ret2win** (有 win 函数) | `gen_ret2win` | 直接可用 |
 | **ret2system** (`system@plt` + `/bin/sh`) | `gen_ret2system` | 直接可用 |
 | **ret2libc** (leak + ret2system) | `gen_ret2libc` | 有 pop_rdi 时完全自动, 支持 `--remote` |
-| **ret2dlresolve** (无 libc) | `gen_ret2dlresolve` | read@plt + 可写 BSS + 非 Full RELRO |
-| **SROP** (sigreturn) | `gen_srop` | 有 syscall;ret + pop 三件套 + read@plt |
+| **ret2dlresolve** (无 libc) | `gen_ret2dlresolve` | read@plt + 可写 BSS + 非 Full RELRO; **注意 glibc>=2.40 已失效, 模板自动检测并 WARN** |
+| **SROP** (sigreturn) | `gen_srop` | 有 syscall;ret + pop 三件套 + read@plt — **Kali 实测打穿** |
 | **shellcode 注入** (NX 关闭) | `gen_shellcode` | 无 jmp_rsp gadget 时不生成断路径 |
 | **Canary 爆破 + ret2win** | `gen_canary_ret2win` | 支持 `--remote` fork 服务器 |
 | **格式化字符串** (GOT 覆写) | `gen_fmtstr` | 有 puts@got+system@plt 时生成实际 payload |
-| **tcache dup** (堆) | `gen_tcache_dup` | 原语骨架 (标注 [骨架]) |
+| **tcache dup** (堆) | `gen_tcache_dup` | 原语骨架; glibc<2.34 目标 __free_hook, >=2.34 自动标注 tls_dtor_list 现代路径 |
 | **one_gadget 自动定位** | ret2libc 内嵌 | 有 one_gadget 工具时自动填充偏移 |
 | **ROP 骨架** (无自动路径时) | — | 输出 gadget 列表 + 推荐工具 |
 
@@ -140,6 +140,10 @@ python3 -m pytest tests/ -v
 | `challenge_fmtstr` | NX, NoCanary, NoPIE | 格式化字符串 | 偏移探测 + [骨架] |
 | `challenge_fmtstr_canary` | NX, Canary, NoPIE | 格式化字符串+Canary | 含 canary 定位 |
 | `challenge_shellcode` | ExecStack, NoCanary | 栈溢出 136 padding | shellcode 注入 |
+| `challenge_srop` | NX, NoCanary, NoPIE | 栈溢出 72 padding | SROP (实测打穿) |
+| `challenge_ret2dlresolve` | NX, NoCanary, NoPIE | 栈溢出 72 padding | ret2dlresolve (glibc<2.40) |
+| `challenge_tcache` | NX, NoCanary, NoPIE | UAF + tcache poisoning | 手动 exploit (现代 glibc 实测打穿) |
+| `challenge_angr_hidden` | NX, NoCanary, NoPIE | 子函数 strcpy 栈溢出 | angr 主动发现 (静态漏检) |
 | `challenge_rop` | NX, NoCanary | 栈溢出 24 padding | 骨架 + gadget 列表 |
 | `challenge_pie` | NX, PIE, NoCanary | 栈溢出 + PIE | 解析运行时地址 |
 
@@ -160,7 +164,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 │   ├── cfg.py                       CFG 圈复杂度 (无 NetworkX)
 │   ├── heap.py                      堆函数检测 + 静态线索
 │   ├── findings.py                  漏洞总结 + 策略生成
-│   └── angr_analysis.py             angr 插件 (可达性/大小验证/整溢扫描, 自注册)
+│   └── angr_analysis.py             angr 插件 (主动发现/可达性/padding, 自注册)
 ├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v1.0)
 ├── intelpwn/core/exploit.py         exploit 模板生成器
 ├── intelpwn/core/verify.py          定点验证 (原 fuzzer, 改名避免误导)

@@ -350,6 +350,16 @@ def print_results(results: dict, binary: str):
                     print(f"  │  {SEV['信息']} {fn}: 可达性未知 ({reach.get('reason', '')})")
             for io_f in angr_res.get("int_overflow", []):
                 print(f"  │  {SEV['中危']} 整数溢出线索: {io_f.get('detail', '')}")
+            for d in angr_res.get("discovered", []):
+                tag = SEV['高危']
+                miss = "" if d.get("static_detected") else " (静态漏检)"
+                pad = f", padding~{d['padding']}" if 'padding' in d else ""
+                kind = "无界写" if d.get("vuln") == "unbounded_write" else "可控大小读"
+                print(f"  │  {tag} [angr 主动发现] {d['callee']} @ {d['call_addr']}: "
+                      f"{kind} 目标在栈上{pad}{miss}")
+            for pc in angr_res.get("padding_crosscheck", []):
+                print(f"  │  {SEV['中危']} padding 不一致: {pc.get('function')} "
+                      f"静态={pc.get('static_padding')} vs angr={pc.get('angr_padding')}")
 
     # ═══════════════════════════════════════════════
     # 10. 综合发现
