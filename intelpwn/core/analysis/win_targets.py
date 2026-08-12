@@ -60,7 +60,9 @@ def _read_string(path: str, vaddr: int) -> str:
     try:
         with open(path, 'rb') as f:
             f.seek(off)
-            return f.read(64).split(b'\x00')[0].decode(errors='replace')
+            raw = f.read(64).split(b'\x00')[0]
+        # 滤控制字节 (恶意二进制可能注入 ANSI/OSC 转义到终端)
+        return ''.join(chr(b) for b in raw if b >= 0x20 or b in (0x09, 0x0a, 0x0d))
     except Exception:
         return ""
 
