@@ -68,6 +68,9 @@ def print_results(results: dict, binary: str):
         print(f"  │  {SEV['中危']} GOT 可写: 可通过 ROP 覆写 GOT 表")
     if has_binsh:
         print(f"  │  {SEV['信息']} /bin/sh 存在于二进制中 → 可直接用于 ret2system")
+    for wt in results.get("win_targets", []):
+        print(f"  │  {SEV['高危']} 命令执行目标 @ {wt.get('address')}: "
+              f"{wt.get('call')} 参数={wt.get('string')!r}")
     hr_strings = results.get("high_risk_strings", [])
     for s in hr_strings:
         if s.get('string') in ('/bin/sh', '/sh'):

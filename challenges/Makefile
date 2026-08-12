@@ -27,7 +27,8 @@ all: \
 	challenge_angr_hidden \
 	challenge_srop \
 	challenge_ret2dlresolve \
-	challenge_tcache
+	challenge_tcache \
+	challenge_ret2text
 
 # ── 1. 最简单的 ret2win ──
 challenge_ret2win: challenge_ret2win.c
@@ -77,6 +78,10 @@ challenge_ret2dlresolve: challenge_ret2dlresolve.c
 challenge_tcache: challenge_tcache.c
 	$(CC) $(CFLAGS) $@ $< $(NOPIE) $(NOCAN) $(NX)
 
+# ── 13. ret2text (win 函数名非标准, 代码模式扫描) ──
+challenge_ret2text: challenge_ret2text.c
+	$(CC) $(CFLAGS) $@ $< $(NOPIE) $(NOCAN) $(NX)
+
 # ── 测试 ──
 test: all
 	@echo "===== 测试 IntelPwn 分析 ====="
@@ -92,5 +97,6 @@ clean:
 	      challenge_shellcode challenge_rop \
 	      challenge_pie challenge_fmtstr_canary \
 	      challenge_angr_hidden challenge_srop \
-	      challenge_ret2dlresolve challenge_tcache
+	      challenge_ret2dlresolve challenge_tcache \
+	      challenge_ret2text
 	rm -rf ../reports

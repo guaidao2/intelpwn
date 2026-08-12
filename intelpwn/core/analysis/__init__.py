@@ -17,6 +17,7 @@ from .rop import analyze_rop
 from .bss import analyze_bss
 from .cfg import analyze_cfg
 from .heap import detect_heap
+from .win_targets import scan_win_targets
 from .findings import (
     generate_findings,
     generate_strategy,
@@ -118,6 +119,9 @@ def analyze_all(path: str, libc_path: str = None) -> dict:
 
     print_info("检测格式化字符串...")
     result["format_string"] = detect_format_string(path, insns=shared_insns, bits=shared_bits)
+
+    print_info("扫描命令执行目标 (ret2text)...")
+    result["win_targets"] = scan_win_targets(path, insns=shared_insns, bits=shared_bits)
 
     result["got"] = analyze_got(path)
 
