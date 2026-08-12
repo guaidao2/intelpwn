@@ -45,7 +45,8 @@ def cross_validate(results: dict, dynamic: dict) -> dict:
                             "note": None if match else "静态 padding 与实测不符, 以实测为准"})
         elif dyn_crash.get("crash"):
             entries.append({**item, "dynamic": f"崩溃 ({dyn_crash.get('signal')}) 未提取到偏移",
-                            "state": "确认"})
+                            "state": "崩溃未关联",
+                            "note": "崩溃未与静态发现关联, 可能是无关的启动/运行时崩溃"})
         else:
             entries.append({**item, "dynamic": "未崩溃",
                             "state": "未复现", "note": "可能输入构造不完整, 不否定静态发现"})
@@ -93,6 +94,8 @@ def cross_validate(results: dict, dynamic: dict) -> dict:
         verdict = "动态发现 (静态盲区, 需人工复核)"
     elif "冲突" in states:
         verdict = "静态-动态冲突 (以动态实测为准)"
+    elif "崩溃未关联" in states:
+        verdict = "存在未关联崩溃 (需人工判断是否与静态发现相关)"
     elif "canary" in states:
         verdict = "canary 拦截 (需先泄露)"
     elif "未复现" in states:

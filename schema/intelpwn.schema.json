@@ -69,7 +69,7 @@
               "static": { "type": ["string", "integer", "null"] },
               "dynamic": { "type": ["string", "integer", "null"] },
               "state": { "type": ["string", "null"],
-                         "enum": ["确认", "冲突", "未复现", "动态发现", "canary", "跳过", null] },
+                         "enum": ["确认", "冲突", "未复现", "动态发现", "崩溃未关联", "canary", "跳过", null] },
               "note": { "type": ["string", "null"] }
             }
           }

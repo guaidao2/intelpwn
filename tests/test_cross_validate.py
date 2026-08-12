@@ -50,6 +50,15 @@ class TestCrossValidate:
         assert out["entries"][0]["state"] == "动态发现"
         assert out["verdict"].startswith("动态发现")
 
+    def test_crash_unlinked(self):
+        """崩溃但未提取到偏移 → 崩溃未关联 (不能确认)"""
+        res = _results(overflow=[{"calculated_padding": 72}])
+        dyn = {"overflow_crash": {"crash": True, "canary_hit": False,
+                                  "cyclic_offset": None, "signal": "SIGSEGV"}}
+        out = cross_validate(res, dyn)
+        assert out["entries"][0]["state"] == "崩溃未关联"
+        assert "未关联" in out["verdict"]
+
     def test_canary_intercept(self):
         """canary 拦截 → canary 状态, 不打击静态"""
         res = _results(overflow=[{"calculated_padding": 72}])

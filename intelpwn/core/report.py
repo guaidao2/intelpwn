@@ -373,6 +373,7 @@ def print_results(results: dict, binary: str):
             "冲突": f"{Colors.RED}[冲突]{Colors.END}",
             "未复现": f"{Colors.YELLOW}[未复现]{Colors.END}",
             "动态发现": f"{Colors.RED}[动态发现]{Colors.END}",
+            "崩溃未关联": f"{Colors.RED}[崩溃未关联]{Colors.END}",
             "canary": f"{Colors.YELLOW}[canary拦截]{Colors.END}",
             "跳过": f"{Colors.CYAN}[跳过]{Colors.END}",
         }

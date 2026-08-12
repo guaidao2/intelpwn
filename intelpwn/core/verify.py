@@ -86,7 +86,7 @@ def cyclic_crash_offset(binary: str, bits: int = 64, pattern_len: int = 0x400) -
     cf.close()
 
     gs = f"""set pagination off
-run < {cf.name}
+run < "{cf.name}"
 set $rspval = *(unsigned long long*)$rsp
 printf "CRASH-MARK RIP=%#llx RSPVAL=%#llx RBP=%#llx\\n", $rip, $rspval, $rbp
 quit"""
@@ -96,8 +96,10 @@ quit"""
     sf.close()
 
     try:
-        # binary 作为位置参数传给 gdb (-- 分隔), 避免路径注入 gdb 脚本
-        rc, out, _ = run(["gdb", "-batch", "-x", sp, "--", binary], timeout=15)
+        # binary 作为位置参数传给 gdb (-- 分隔), 避免路径注入 gdb 脚本;
+        # -nx -nh 禁用 .gdbinit 自动加载 (防不可信目录下的 gdb 命令注入)
+        rc, out, _ = run(["gdb", "-nx", "-nh", "-batch", "-x", sp, "--", binary],
+                         timeout=15)
     finally:
         os.unlink(cf.name)
         os.unlink(sp)
