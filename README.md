@@ -65,7 +65,7 @@
 ### 输出格式
 
 - **终端报告**: 中文报告 (漏洞汇总 + 保护状态 + 栈布局 + ROP 列表 + angr 符号执行 + 修复建议)
-- **JSON 输出**: `--json` 参数 → schema v1.0 (见 `schema/intelpwn.schema.json`), 可管道给 jq / CI
+- **JSON 输出**: `--json` 参数 → schema v1.1 (见 `schema/intelpwn.schema.json`), 可管道给 jq / CI
 - **批量扫描**: `--dir <目录>` 扫描目录下所有 ELF, 输出汇总表或 JSON 数组
 
 ---
@@ -165,7 +165,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 │   ├── heap.py                      堆函数检测 + 静态线索
 │   ├── findings.py                  漏洞总结 + 策略生成
 │   └── angr_analysis.py             angr 插件 (主动发现/可达性/padding, 自注册)
-├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v1.0)
+├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v1.1)
 ├── intelpwn/core/exploit.py         exploit 模板生成器
 ├── intelpwn/core/verify.py          定点验证 (cyclic 偏移提取)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
@@ -197,7 +197,7 @@ analyze_all()
   └─ findings.py         → 综合漏洞总结
   │
   ▼
-report.py               → 中文报告 / --json 输出 (schema v1.0)
+report.py               → 中文报告 / --json 输出 (schema v1.1)
 exploit.py              → 模板自动选择 (ret2win/ret2libc/ret2dlresolve/SROP/shellcode/fmtstr/...)
 ```
 

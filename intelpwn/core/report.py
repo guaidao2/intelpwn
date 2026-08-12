@@ -1,7 +1,7 @@
 """专业 CTF 报告输出 — 中文 + 全量信息 (适配英文键名)"""
 import os
 
-from intelpwn.utils.output import Colors, print_info, print_success, print_warning, print_error
+from intelpwn.utils.output import Colors, print_info, print_success, print_warning
 
 
 SEV = {
