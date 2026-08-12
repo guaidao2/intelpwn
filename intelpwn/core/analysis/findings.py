@@ -61,6 +61,13 @@ def generate_findings(result: dict) -> dict:
             "severity": "中危",
             "exploitable": False,
         })
+    for clue in heap.get("clues", []):
+        findings.append({
+            "type": f"堆线索: {clue.get('type', '')}",
+            "detail": clue.get("detail", ""),
+            "severity": clue.get("severity", "中危"),
+            "exploitable": clue.get("type") == "double_free",
+        })
 
     # ROP
     rop = result.get("rop", {})
@@ -72,6 +79,16 @@ def generate_findings(result: dict) -> dict:
                 "severity": "信息",
                 "exploitable": True,
             })
+
+    # 整数溢出线索 (angr 静态扫描)
+    angr_res = result.get("angr_check", {})
+    for io_f in angr_res.get("int_overflow", []):
+        findings.append({
+            "type": "整数溢出 (大小参数算术运算)",
+            "detail": io_f.get("detail", ""),
+            "severity": io_f.get("severity", "中危"),
+            "exploitable": False,
+        })
 
     return {
         "count": len(findings),

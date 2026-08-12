@@ -95,9 +95,6 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
     if not func_bounds and insns:
         func_bounds = [(insns[0].address, insns[-1].address + 1, "sub_%x" % insns[0].address)]
 
-    if not func_bounds and insns:
-        func_bounds = [(insns[0].address, insns[-1].address + 1, "sub_%x" % insns[0].address)]
-
     # 建立 PLT 地址→名称映射
     try:
         pwn_elf = ELF(path, checksec=False)
@@ -105,7 +102,20 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
     except Exception:
         plt_map = {}
 
-    dangerous_names = {'read', 'gets', 'fgets', 'scanf', 'system', 'execve'}
+    # 危险输入函数分两类:
+    #  - BOUNDED_INPUTS: 有显式大小参数, 需比较 大小 vs 栈帧
+    #  - UNBOUNDED_WRITES: 无大小参数, 目标地址落在栈上即危险
+    #  - scanf 特殊: 取决于格式串 (仅 %s 无宽度时危险)
+    bounded_inputs = {
+        'read': ('rdx', 'edx'),      # (fd, buf, size)
+        'recv': ('rdx', 'edx'),      # (fd, buf, size, flags)
+        'memcpy': ('rdx', 'edx'),    # (dst, src, size)
+        'strncpy': ('rdx', 'edx'),   # (dst, src, size)
+        'fgets': ('rsi', 'esi'),     # (buf, size, stream)
+        'snprintf': ('rsi', 'esi'),  # (buf, size, fmt, ...)
+    }
+    unbounded_writes = {'gets', 'strcpy', 'sprintf', 'strcat'}
+    input_funcs = set(bounded_inputs) | unbounded_writes | {'scanf'}
 
     # 预建地址表供二分查找 (O(N) 一次, 替代 O(N×F) 逐函数过滤)
     addrs = [insn.address for insn in insns]
@@ -122,6 +132,7 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
         lea_insn = ""
         has_danger = False
         danger_addr = ""
+        danger_conf = "高"
 
         for idx, insn in enumerate(func_insns):
             if insn.mnemonic == 'lea' and ('rbp' in insn.op_str or 'ebp' in insn.op_str):
@@ -142,56 +153,62 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
                 except (ValueError, TypeError):
                     continue
 
-                if callee not in dangerous_names:
+                if callee not in input_funcs:
                     continue
+
+                window = func_insns[max(0, idx - 10):idx]
 
                 truly_dangerous = False
                 arg_size = -1
-                for j in range(max(0, idx - 10), idx):
-                    prev = func_insns[j]
-                    if callee == 'read' and prev.mnemonic == 'mov' and 'edx' in prev.op_str.split(',')[0]:
-                        try:
-                            arg_size = int(prev.op_str.split(',')[1].strip(), 16)
-                        except ValueError:
-                            pass
-                    if callee == 'read' and prev.mnemonic == 'mov' and ('rdx,' in prev.op_str or 'rdx ' in prev.op_str):
-                        parts = prev.op_str.split(',')
-                        src = parts[1].strip() if len(parts) > 1 else ""
-                        try:
-                            arg_size = int(src, 16)
-                        except ValueError:
-                            pass
-                    if callee == 'fgets' and prev.mnemonic == 'mov' and ('esi,' in prev.op_str or 'esi ' in prev.op_str):
-                        parts = prev.op_str.split(',')
-                        src = parts[1].strip() if len(parts) > 1 else ""
-                        try:
-                            arg_size = int(src, 16)
-                        except ValueError:
-                            pass
-                    if callee == 'fgets' and prev.mnemonic == 'mov' and ('rsi,' in prev.op_str or 'rsi ' in prev.op_str):
-                        parts = prev.op_str.split(',')
-                        src = parts[1].strip() if len(parts) > 1 else ""
-                        try:
-                            arg_size = int(src, 16)
-                        except ValueError:
-                            pass
+                conf = "高"
 
-                if callee == 'gets':
-                    truly_dangerous = True
-                elif callee in ('read', 'fgets') and arg_size > 0:
-                    truly_dangerous = arg_size > stack_size + 16
-                elif callee in ('read', 'fgets') and arg_size < 0:
-                    truly_dangerous = True
+                if callee in bounded_inputs:
+                    reg64, reg32 = bounded_inputs[callee]
+                    # 大小参数常通过 mov reg, imm 或 mov reg, [reg+disp] 传入
+                    for prev in window:
+                        if prev.mnemonic == 'mov':
+                            parts = prev.op_str.split(',')
+                            if len(parts) >= 2 and parts[0].strip() in (reg64, reg32):
+                                try:
+                                    arg_size = int(parts[1].strip(), 16)
+                                    break
+                                except ValueError:
+                                    pass
+                    if arg_size > 0:
+                        truly_dangerous = arg_size > stack_size + 16
+                    else:
+                        # 大小无法静态确定 (来自变量/寄存器) → 保守报险, 降置信度
+                        truly_dangerous = True
+                        conf = "中"
+
+                elif callee in unbounded_writes:
+                    # 无界写: 第一个参数 (rdi/edi) 指向栈缓冲 → 危险
+                    first_reg = 'rdi' if bits == 64 else 'edi'
+                    for prev in window:
+                        if prev.mnemonic == 'lea' and first_reg in prev.op_str:
+                            truly_dangerous = True
+                            break
+                    if not truly_dangerous and has_lea:
+                        truly_dangerous = True
+                        conf = "中"
+
                 elif callee == 'scanf':
-                    truly_dangerous = True
-                else:
-                    truly_dangerous = False
+                    # 格式串含无宽度 %s → 危险; 否则 (如 %d/%x) 不是溢出源
+                    fmt = _resolve_scanf_format(path, window, bits)
+                    if fmt and re.search(r'%[0-9]*s', fmt) and not re.search(r'%[0-9]+s', fmt):
+                        first_reg = 'rdi' if bits == 64 else 'edi'
+                        if any(p.mnemonic == 'lea' and first_reg in p.op_str for p in window):
+                            truly_dangerous = True
+                        elif has_lea:
+                            truly_dangerous = True
+                            conf = "中"
 
                 if truly_dangerous:
                     has_danger = True
                     danger_addr = f"{callee} ({insn.op_str})"
                     if arg_size > 0:
                         danger_addr += f" size={arg_size}"
+                    danger_conf = conf
 
         if has_lea and has_danger:
             padding = stack_size + (8 if bits == 64 else 4)
@@ -202,10 +219,38 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
                 "calculated_padding": padding,
                 "dangerous_call": danger_addr,
                 "lea_insn": lea_insn,
-                "confidence": "高",
+                "confidence": danger_conf,
             })
 
     return results
+
+
+def _resolve_scanf_format(path: str, window, bits) -> str:
+    """解析 scanf 的格式串: 查找 lea reg, [rip+disp] / mov reg, imm 指向的 .rodata 字符串"""
+    fmt_addr = None
+    for prev in window:
+        if prev.mnemonic == 'lea' and 'rip' in prev.op_str:
+            m = re.search(r'\[rip\s*\+\s*(0x[0-9a-fA-F]+)\]', prev.op_str)
+            if m:
+                fmt_addr = prev.address + prev.size + int(m.group(1), 16)
+                break
+        elif prev.mnemonic == 'mov' and prev.op_str.startswith(('rdi,', 'edi,')):
+            parts = prev.op_str.split(',')
+            if len(parts) >= 2:
+                try:
+                    fmt_addr = int(parts[1].strip(), 16)
+                    break
+                except ValueError:
+                    pass
+    if fmt_addr is None:
+        return ""
+    try:
+        with open(path, 'rb') as f:
+            f.seek(fmt_addr)
+            raw = f.read(64)
+        return raw.split(b'\x00')[0].decode(errors='replace')
+    except Exception:
+        return ""
 
 
 def verify_padding(path: str, static_padding: int) -> dict:

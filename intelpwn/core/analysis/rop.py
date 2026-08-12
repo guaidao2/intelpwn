@@ -41,6 +41,8 @@ def find_gadgets_capstone(insns, bits) -> dict:
         "ret": "未找到",
         "pop_eax": "未找到",
         "int_0x80": "未找到",
+        "jmp_rsp": "未找到",
+        "syscall": "未找到",
     }
 
     for i, insn in enumerate(insns):
@@ -80,6 +82,17 @@ def find_gadgets_capstone(insns, bits) -> dict:
             if i + 1 < len(insns) and insns[i + 1].mnemonic == 'ret':
                 if result["int_0x80"] == "未找到":
                     result["int_0x80"] = hex(insn.address)
+
+        # jmp rsp (x64) — shellcode 注入无地址泄露时用
+        if bits == 64 and mnemo == 'jmp' and op_str == 'rsp':
+            if result["jmp_rsp"] == "未找到":
+                result["jmp_rsp"] = hex(insn.address)
+
+        # syscall; ret (x64) — SROP / 直接 syscall
+        if bits == 64 and mnemo == 'syscall':
+            if i + 1 < len(insns) and insns[i + 1].mnemonic == 'ret':
+                if result["syscall"] == "未找到":
+                    result["syscall"] = hex(insn.address)
 
     return result
 
@@ -121,6 +134,8 @@ def analyze_rop(path: str, plt: dict = None, insns=None, bits=None) -> dict:
                 "ret": ['ret'],
                 "pop_eax": ['pop eax', 'ret'],
                 "int_0x80": ['int 0x80', 'ret'],
+                "jmp_rsp": ['jmp rsp'],
+                "syscall": ['syscall', 'ret'],
             }
             for gname, pattern in fallback_map.items():
                 if result.get(gname, "未找到") == "未找到":
@@ -149,6 +164,13 @@ def analyze_rop(path: str, plt: dict = None, insns=None, bits=None) -> dict:
         chains.append({
             "type": "ret2libc (write泄漏)",
             "condition": "pop_rdi + write@plt + main → 二次利用",
+            "feasible": True,
+        })
+
+    if result.get('syscall', "未找到") != "未找到":
+        chains.append({
+            "type": "SROP",
+            "condition": "syscall; ret gadget + 可控栈 → sigreturn",
             "feasible": True,
         })
 

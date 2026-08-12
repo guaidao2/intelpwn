@@ -156,17 +156,17 @@ def print_results(results: dict, binary: str):
         print(f"  │")
         print(f"  │    ┌─ 利用可行性 ─────────────────────")
         if not canary:
-            print(f"  │    │  {Colors.GREEN}✓ Canary 关闭: 可直接覆盖返回地址{Colors.END}")
+            print(f"  │    │  {Colors.GREEN}[+] Canary 关闭: 可直接覆盖返回地址{Colors.END}")
         else:
-            print(f"  │    │  {Colors.YELLOW}✗ Canary 开启: 需先通过信息泄露获取 canary 值{Colors.END}")
+            print(f"  │    │  {Colors.YELLOW}[-] Canary 开启: 需先通过信息泄露获取 canary 值{Colors.END}")
         if not nx:
-            print(f"  │    │  {Colors.GREEN}✓ NX 关闭: 可直接在栈上执行 shellcode{Colors.END}")
+            print(f"  │    │  {Colors.GREEN}[+] NX 关闭: 可直接在栈上执行 shellcode{Colors.END}")
         else:
-            print(f"  │    │  {Colors.YELLOW}✗ NX 开启: 需构造 ROP 链绕过{Colors.END}")
+            print(f"  │    │  {Colors.YELLOW}[-] NX 开启: 需构造 ROP 链绕过{Colors.END}")
         if not pie:
-            print(f"  │    │  {Colors.GREEN}✓ PIE 关闭: 代码地址固定, 可直接使用 ROP gadgets{Colors.END}")
+            print(f"  │    │  {Colors.GREEN}[+] PIE 关闭: 代码地址固定, 可直接使用 ROP gadgets{Colors.END}")
         else:
-            print(f"  │    │  {Colors.YELLOW}✗ PIE 开启: 需先泄露代码段基址{Colors.END}")
+            print(f"  │    │  {Colors.YELLOW}[-] PIE 开启: 需先泄露代码段基址{Colors.END}")
 
         # 利用策略推荐
         print(f"  │    │")
@@ -317,6 +317,39 @@ def print_results(results: dict, binary: str):
         print(f"  │  {SEV['信息']} 函数数量: {heap.get('function_count', 0)}, 圈复杂度: {heap.get('complexity', 0)}")
         if heap.get('complexity', 0) > 30:
             print(f"  │  {SEV['中危']} 代码复杂度较高, 可能存在堆漏洞")
+        for clue in heap.get('clues', []):
+            print(f"  │  {_sev_tag(clue.get('severity', '中危'))} {clue.get('detail', '')}")
+
+    # ═══════════════════════════════════════════════
+    # 9.5 angr 符号执行
+    # ═══════════════════════════════════════════════
+    angr_res = results.get("angr_check", {})
+    if angr_res:
+        print(f"  │")
+        print(f"  ├─ 符号执行 (angr) ────────────────────────")
+        if not angr_res.get("available"):
+            print(f"  │  {SEV['信息']} angr 未安装, 已跳过 (可选: pip install angr)")
+        else:
+            for ch in angr_res.get("checks", []):
+                fn = ch.get("function", "?")
+                reach = ch.get("reachability", {})
+                if reach.get("reachable"):
+                    print(f"  │  {SEV['信息']} {fn}: 溢出调用点可达")
+                    sc = ch.get("size_check", {})
+                    if sc.get("status") == "concrete":
+                        tag = SEV['高危'] if sc.get("dangerous") else SEV['低危']
+                        print(f"  │  {tag} {fn}: 大小参数确定 = {sc.get('size')}, "
+                              + ("超过栈缓冲" if sc.get("dangerous") else "未超过栈缓冲"))
+                    elif sc.get("status") == "symbolic":
+                        tag = SEV['高危'] if sc.get("dangerous") else SEV['中危']
+                        print(f"  │  {tag} {fn}: 大小参数为符号值, 最大可能 = {sc.get('max_possible')}, "
+                              + ("可能超过栈缓冲" if sc.get("dangerous") else "受限"))
+                elif reach.get("reachable") is False:
+                    print(f"  │  {SEV['中危']} {fn}: 调用点不可达 (疑似死代码), 静态报告可能误报")
+                else:
+                    print(f"  │  {SEV['信息']} {fn}: 可达性未知 ({reach.get('reason', '')})")
+            for io_f in angr_res.get("int_overflow", []):
+                print(f"  │  {SEV['中危']} 整数溢出线索: {io_f.get('detail', '')}")
 
     # ═══════════════════════════════════════════════
     # 10. 综合发现
@@ -368,6 +401,7 @@ def print_json_summary(results: dict) -> str:
         return v
 
     summary = {
+        "schema_version": "1.0",
         "file": results.get("file"),
         "path": results.get("path"),
         "protections": {

@@ -1,4 +1,8 @@
-"""分析引导的定点 Fuzzer — 基于 analyze 结果做针对性测试。"""
+"""分析引导的定点验证器 — 基于 analyze 结果做针对性验证 (原 fuzzer)。
+
+名称说明: 本模块不是覆盖率引导的 fuzz 器, 而是对已分析出的漏洞做
+确定性验证: 栈溢出崩溃验证 + 边界值测试 + 格式化字符串偏移定位。
+"""
 
 import subprocess
 import tempfile
@@ -25,8 +29,8 @@ def fmtstr_offset_find(binary: str, max_probe: int = 40) -> Optional[int]:
     return None
 
 
-def fuzz_by_analysis(binary: str, libc_path: str = None) -> tuple:
-    """基于分析结果进行定点 Fuzz
+def verify_by_analysis(binary: str, libc_path: str = None) -> tuple:
+    """基于分析结果进行定点验证
     
     Returns:
         (findings, results) — findings 为人类可读列表, results 为分析 dict

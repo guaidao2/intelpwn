@@ -1,4 +1,9 @@
-"""分析模块包 — analyzer.py 的模块化拆分。"""
+"""分析模块包 — analyzer.py 的模块化拆分。
+
+提供插件注册机制: 新分析器可通过 register_analyzer 自注册,
+analyze_all 会在内置流程之后自动执行所有已注册的扩展分析器,
+结果写入 result[<name>]。内置分析器仍走显式管线 (有依赖关系)。
+"""
 
 import os
 
@@ -21,6 +26,47 @@ from .findings import (
     check_binsh,
 )
 
+# ── 插件注册表 ─────────────────────────────────────────────────────
+_EXTRA_ANALYZERS = {}  # name -> callable(path, results_so_far) -> dict
+
+
+def register_analyzer(name: str):
+    """注册扩展分析器 (装饰器)。
+
+    用法:
+        @register_analyzer("angr_check")
+        def angr_check(path, results):
+            ...
+    """
+    def deco(fn):
+        _EXTRA_ANALYZERS[name] = fn
+        return fn
+    return deco
+
+
+def list_analyzers() -> list:
+    """返回所有扩展分析器名称 (调试/报告用)"""
+    return sorted(_EXTRA_ANALYZERS)
+
+
+def run_extra_analyzers(path: str, results: dict) -> dict:
+    """执行所有已注册的扩展分析器, 结果写入 results[name]"""
+    for name, fn in _EXTRA_ANALYZERS.items():
+        try:
+            results[name] = fn(path, results)
+        except Exception as e:
+            results[name] = {"error": f"{type(e).__name__}: {e}"}
+    return results
+
+
+# 可选插件模块: 必须在注册表定义之后导入 (插件依赖 register_analyzer),
+# 导入失败 (依赖缺失) 时自动跳过, 不影响内置分析
+try:
+    from . import angr_analysis  # noqa: F401 — 自注册 angr_check 插件
+except Exception:
+    pass
+
+
 __all__ = [
     "analyze_all",
     "analyze_protections",
@@ -34,6 +80,8 @@ __all__ = [
     "detect_heap",
     "generate_findings",
     "generate_strategy",
+    "register_analyzer",
+    "list_analyzers",
 ]
 
 
@@ -112,6 +160,12 @@ def analyze_all(path: str, libc_path: str = None) -> dict:
         result["libc"] = detect_libc(path)
 
     result["has_binsh"] = check_binsh(path)
+
+    # 扩展分析器 (插件钩子)
+    extra = list_analyzers()
+    if extra:
+        print_info(f"执行扩展分析器: {', '.join(extra)}")
+        run_extra_analyzers(path, result)
 
     print_info("生成综合漏洞评估...")
     result["summary"] = generate_findings(result)
