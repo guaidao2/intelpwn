@@ -30,6 +30,42 @@ def fmtstr_offset_find(binary: str, max_probe: int = 40) -> Optional[int]:
     return None
 
 
+def _parse_gdb_crash(out: str, rc: int, bits: int = 64) -> dict:
+    """解析 gdb -batch 输出 → 崩溃判定 (纯函数, 可单测)。
+
+    崩溃判据: gdb 输出含 "Program received signal" (正常退出打印的是
+    "Program exited normally", 不会误判)。
+    """
+    n = 8 if bits == 64 else 4
+    sig = None
+    m = re.search(r'Program received signal (\w+)', out)
+    if m:
+        sig = m.group(1)
+    crash = "Program received signal" in out
+    smashing = "stack smashing detected" in out
+    # canary 指纹: SIGABRT (__stack_chk_fail → abort) 或 stack smashing 提示
+    canary_hit = smashing or sig == "SIGABRT"
+
+    rip = rspval = 0
+    m = re.search(r'CRASH-MARK RIP=(0x[0-9a-f]+) RSPVAL=(0x[0-9a-f]+) RBP=(0x[0-9a-f]+)', out)
+    if m:
+        rip, rspval, _ = (int(x, 16) for x in m.groups())
+
+    offset = None
+    pack = p64 if bits == 64 else p32
+    if crash and rspval:
+        off = cyclic_find(pack(rspval), n=n)
+        if off is not None and off >= 0:
+            offset = off
+    if offset is None and crash and rip:
+        off = cyclic_find(pack(rip), n=n)
+        if off is not None and off >= 0:
+            offset = off
+
+    return {"crash": crash, "signal": sig, "canary_hit": bool(canary_hit),
+            "cyclic_offset": offset, "rip": rip}
+
+
 def cyclic_crash_offset(binary: str, bits: int = 64, pattern_len: int = 0x400) -> dict:
     """cyclic 崩溃实验: 自动提取精确溢出偏移。
 
@@ -37,11 +73,11 @@ def cyclic_crash_offset(binary: str, bits: int = 64, pattern_len: int = 0x400) -
       - 主流崩溃模式是 saved rbp 被覆盖后 epilogue 走坏 rbp,
         gdb 的 rip 显示 ret 指令本身 → cyclic_find(rip) 恒失败;
         但崩溃时 $rsp 正指向返回地址槽, 里面的 cyclic 字节能被精确命中。
-      - canary 靶子: SIGABRT + "stack smashing detected" + rip 在 libc → canary_hit。
+      - canary 靶子: SIGABRT + "stack smashing detected" → canary_hit。
     提取顺序: $rsp 指向值 → $rip → canary 指纹 → 未命中。
 
     Returns:
-        {crash, signal, canary_hit, cyclic_offset, rip}
+        {crash, signal, canary_hit, cyclic_offset, rip} 或 {"error": ...}
     """
     n = 8 if bits == 64 else 4
     pat = cyclic(pattern_len, n=n)
@@ -50,7 +86,6 @@ def cyclic_crash_offset(binary: str, bits: int = 64, pattern_len: int = 0x400) -
     cf.close()
 
     gs = f"""set pagination off
-file {binary}
 run < {cf.name}
 set $rspval = *(unsigned long long*)$rsp
 printf "CRASH-MARK RIP=%#llx RSPVAL=%#llx RBP=%#llx\\n", $rip, $rspval, $rbp
@@ -61,38 +96,15 @@ quit"""
     sf.close()
 
     try:
-        rc, out, _ = run(["gdb", "-batch", "-x", sp], timeout=15)
+        # binary 作为位置参数传给 gdb (-- 分隔), 避免路径注入 gdb 脚本
+        rc, out, _ = run(["gdb", "-batch", "-x", sp, "--", binary], timeout=15)
     finally:
         os.unlink(cf.name)
         os.unlink(sp)
 
-    crash = rc is not None and rc < 0 or "CRASH-MARK" in out
-    sig = None
-    m = re.search(r'Program received signal (\S+)', out)
-    if m:
-        sig = m.group(1)
-    smashing = "stack smashing detected" in out
-
-    rip = rspval = 0
-    m = re.search(r'CRASH-MARK RIP=(0x[0-9a-f]+) RSPVAL=(0x[0-9a-f]+) RBP=(0x[0-9a-f]+)', out)
-    if m:
-        rip, rspval, _ = (int(x, 16) for x in m.groups())
-
-    canary_hit = smashing or sig == "SIGABRT" or (0x7f0000000000 <= rip < 0x800000000000)
-
-    offset = None
-    pack = p64 if bits == 64 else p32
-    if rspval:
-        off = cyclic_find(pack(rspval), n=n)
-        if off is not None and off >= 0:
-            offset = off
-    if offset is None and rip:
-        off = cyclic_find(pack(rip), n=n)
-        if off is not None and off >= 0:
-            offset = off
-
-    return {"crash": crash, "signal": sig, "canary_hit": bool(canary_hit),
-            "cyclic_offset": offset, "rip": rip}
+    if rc in (-1, -2):
+        return {"error": "gdb 不可用或超时"}
+    return _parse_gdb_crash(out, rc, bits)
 
 
 def verify_dynamic(binary: str, results: dict) -> dict:

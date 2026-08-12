@@ -36,7 +36,7 @@ def _use_venv():
 _use_venv()
 
 from intelpwn.utils.output import (
-    print_banner, print_info, print_success, Colors, print_section_header,
+    print_banner, print_info, print_success, print_warning, Colors, print_section_header,
 )
 from intelpwn.core.analysis import analyze_all
 from intelpwn.core.report import print_results, print_json_summary

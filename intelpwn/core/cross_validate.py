@@ -31,6 +31,9 @@ def cross_validate(results: dict, dynamic: dict) -> dict:
         item = {"item": "栈溢出", "static": f"padding={static_pad}"}
         if dyn_crash is None:
             entries.append({**item, "dynamic": "动态跳过", "state": "跳过"})
+        elif dyn_crash.get("error"):
+            entries.append({**item, "dynamic": dyn_crash["error"], "state": "跳过",
+                            "note": "动态工具不可用"})
         elif dyn_crash.get("canary_hit"):
             entries.append({**item, "dynamic": "canary 拦截 (stack smashing)",
                             "state": "canary", "note": "静态发现仍有效, 需先泄露 canary"})
@@ -60,7 +63,10 @@ def cross_validate(results: dict, dynamic: dict) -> dict:
     doff = dynamic.get("fmtstr_offset") if dynamic else None
     if fs.get("vulnerable"):
         soff = fs.get("best_offset")
-        if doff is not None:
+        if not dynamic:
+            entries.append({"item": "fmtstr 偏移", "static": soff,
+                            "dynamic": "动态跳过", "state": "跳过"})
+        elif doff is not None:
             match = (soff == doff)
             entries.append({
                 "item": "fmtstr 偏移", "static": soff, "dynamic": doff,

@@ -1,9 +1,10 @@
-"""单元测试 — 交叉验证四态判定"""
+"""单元测试 — 交叉验证四态判定 + gdb 崩溃解析"""
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from intelpwn.core.cross_validate import cross_validate
+from intelpwn.core.verify import _parse_gdb_crash
 
 
 def _results(overflow=None, fmtstr=None, angr=None):
@@ -80,3 +81,40 @@ class TestCrossValidate:
         res = _results(overflow=[{"calculated_padding": 72}])
         out = cross_validate(res, {})
         assert out["entries"][0]["state"] == "跳过"
+
+    def test_fmtstr_skip_no_dynamic(self):
+        """动态未跑时 fmtstr 也应为跳过, 不是未复现"""
+        res = _results(fmtstr={"vulnerable": True, "best_offset": 6})
+        out = cross_validate(res, {})
+        assert out["entries"][0]["state"] == "跳过"
+
+
+class TestParseGdbCrash:
+    def test_crash_segv_offset(self):
+        """SIGSEGV + rsp 指向 cyclic → crash=True + 偏移"""
+        out = ("Program received signal SIGSEGV, Segmentation fault.\n"
+               "CRASH-MARK RIP=0x4011f2 RSPVAL=0x616161616161616a RBP=0x6161616161616169\n")
+        r = _parse_gdb_crash(out, 0)
+        assert r["crash"] is True
+        assert r["signal"] == "SIGSEGV"
+        assert r["cyclic_offset"] == 72
+        assert r["canary_hit"] is False
+
+    def test_normal_exit_not_crash(self):
+        """gdb 正常退出 (无 signal) → crash=False, 不能被误判为确认"""
+        out = ("Program exited normally.\n"
+               "CRASH-MARK RIP=0x4011f2 RSPVAL=0x7fffffffe968 RBP=0x7fffffffe960\n")
+        r = _parse_gdb_crash(out, 0)
+        assert r["crash"] is False
+        assert r["cyclic_offset"] is None
+        assert r["canary_hit"] is False
+
+    def test_canary_sigabrt(self):
+        """SIGABRT + stack smashing → canary_hit=True"""
+        out = ("Program received signal SIGABRT, Aborted.\n"
+               "*** stack smashing detected ***: terminated\n"
+               "CRASH-MARK RIP=0x7ffff7e40cfc RSPVAL=0x0 RBP=0x7ffff7fbb000\n")
+        r = _parse_gdb_crash(out, 0)
+        assert r["crash"] is True
+        assert r["canary_hit"] is True
+        assert r["cyclic_offset"] is None
