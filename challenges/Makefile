@@ -23,7 +23,11 @@ all: \
 	challenge_shellcode \
 	challenge_rop \
 	challenge_pie \
-	challenge_fmtstr_canary
+	challenge_fmtstr_canary \
+	challenge_angr_hidden \
+	challenge_srop \
+	challenge_ret2dlresolve \
+	challenge_tcache
 
 # ── 1. 最简单的 ret2win ──
 challenge_ret2win: challenge_ret2win.c
@@ -57,6 +61,22 @@ challenge_pie: challenge_pie.c
 challenge_fmtstr_canary: challenge_fmtstr_canary.c
 	$(CC) $(CFLAGS) $@ $< $(NOPIE) $(CANARY) $(NX)
 
+# ── 9. 静态漏检 + angr 主动发现 (子函数 strcpy) ──
+challenge_angr_hidden: challenge_angr_hidden.c
+	$(CC) $(CFLAGS) $@ $< $(NOPIE) $(NOCAN) $(NX)
+
+# ── 10. SROP (内嵌 syscall/pop gadgets) ──
+challenge_srop: challenge_srop.c
+	$(CC) $(CFLAGS) $@ $< $(NOPIE) $(NOCAN) $(NX)
+
+# ── 11. ret2dlresolve (glibc<2.40 环境) ──
+challenge_ret2dlresolve: challenge_ret2dlresolve.c
+	$(CC) $(CFLAGS) $@ $< $(NOPIE) $(NOCAN) $(NX)
+
+# ── 12. 现代 glibc UAF + tcache poisoning ──
+challenge_tcache: challenge_tcache.c
+	$(CC) $(CFLAGS) $@ $< $(NOPIE) $(NOCAN) $(NX)
+
 # ── 测试 ──
 test: all
 	@echo "===== 测试 IntelPwn 分析 ====="
@@ -70,5 +90,7 @@ clean:
 	rm -f challenge_ret2win challenge_ret2win_canary \
 	      challenge_ret2libc challenge_fmtstr \
 	      challenge_shellcode challenge_rop \
-	      challenge_pie challenge_fmtstr_canary
+	      challenge_pie challenge_fmtstr_canary \
+	      challenge_angr_hidden challenge_srop \
+	      challenge_ret2dlresolve challenge_tcache
 	rm -rf ../reports
