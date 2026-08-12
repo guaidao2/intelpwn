@@ -1,6 +1,6 @@
 // challenge_ret2text — ret2text 靶子 (自编, 非比赛题目)
 //
-// 与 pwn1 同模式: win 函数名非标准 + system 命令调用, 需代码模式扫描
+// 与经典 ret2text 同模式: win 函数名非标准 + system 命令调用, 需代码模式扫描
 // (符号表 6 名名单找不到, 但 .text 里有 "mov edi, flag_str; call system" 序列)。
 // 字符串用 "cat flag" (无路径前缀) — 验证命令特征对无斜杠变体也生效。
 //

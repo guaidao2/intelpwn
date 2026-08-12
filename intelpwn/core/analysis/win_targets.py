@@ -96,7 +96,7 @@ def _resolve_rdi_chain(insns, call_idx: int, window: int = 20):
         if mnem == 'mov':
             m = re.search(r'0x[0-9a-fA-F]+', src)
             if m and '[' not in src:
-                # mov edi, <imm> → 自包含起点 (pwn1 形态)
+                # mov edi, <imm> → 自包含起点 (经典 ret2text 形态)
                 return int(m.group(0), 16), prev.address
             # mov reg, reg2 → 链传播
             if src in _REGS64 or src in _REGS32:
