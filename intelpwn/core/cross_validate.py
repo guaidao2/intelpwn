@@ -89,6 +89,15 @@ def cross_validate(results: dict, dynamic: dict) -> dict:
             entries.append({"item": "angr 可达性", "static": "可达",
                             "dynamic": "崩溃确认", "state": "确认"})
 
+    # ── 4. 边界崩毁 (静态盲区) ──
+    bc = dynamic.get("boundary_crash") if dynamic else None
+    if bc and not so_list:
+        entries.append({
+            "item": "边界崩毁", "static": "未报",
+            "dynamic": f"size={bc.get('size')} SIG{bc.get('signal')}",
+            "state": "动态发现",
+        })
+
     # ── 结论 ──
     states = [e["state"] for e in entries]
     if "动态发现" in states:

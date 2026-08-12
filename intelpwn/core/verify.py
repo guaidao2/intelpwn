@@ -12,7 +12,7 @@ from typing import Optional
 
 from pwn import cyclic, cyclic_find, p64, p32
 from intelpwn.utils.binary import run
-from intelpwn.utils.output import print_info, print_success, print_warning, Colors, print_error
+from intelpwn.utils.output import print_info, print_success, print_warning, Colors
 
 
 def fmtstr_offset_find(binary: str, max_probe: int = 40) -> Optional[int]:
@@ -118,21 +118,25 @@ def verify_dynamic(binary: str, results: dict) -> dict:
     bits = results.get("protections", {}).get("bits", 64)
     out = {"overflow_crash": None, "fmtstr_offset": None, "boundary_crash": None}
 
-    # 1. 栈溢出: cyclic 精确偏移提取
+    # 1. 栈溢出: cyclic 精确偏移提取 — 无论静态是否已报, 都要探测
+    #    (静态未报但动态崩溃 → cross_validate 标"动态发现", 反哺静态盲区)
     so_list = results.get("overflow", [])
+    print_info("cyclic 探测溢出崩溃...")
+    out["overflow_crash"] = cyclic_crash_offset(binary, bits)
+    c = out["overflow_crash"]
     if so_list:
         func = so_list[0].get("function", "?")
-        print_info(f"cyclic 验证栈溢出 (函数={func})...")
-        out["overflow_crash"] = cyclic_crash_offset(binary, bits)
-        c = out["overflow_crash"]
-        if c.get("cyclic_offset") is not None:
-            print_success(f"  动态偏移: {c['cyclic_offset']}")
-        elif c.get("canary_hit"):
-            print_warning("  canary 拦截 (stack smashing), 需先泄露 canary")
-        elif c.get("crash"):
-            print_warning(f"  崩溃 ({c.get('signal')}) 但未提取到偏移")
-        else:
-            print_warning("  未崩溃")
+        print_info(f"验证栈溢出 (函数={func})...")
+    if c.get("cyclic_offset") is not None:
+        print_success(f"  动态偏移: {c['cyclic_offset']}")
+    elif c.get("canary_hit"):
+        print_warning("  canary 拦截 (stack smashing), 需先泄露 canary")
+    elif c.get("crash"):
+        print_warning(f"  崩溃 ({c.get('signal')}) 但未提取到偏移")
+    elif c.get("error"):
+        print_warning(f"  {c['error']}")
+    else:
+        print_warning("  未崩溃")
 
     # 2. 格式化字符串偏移定位
     fs = results.get("format_string", {})

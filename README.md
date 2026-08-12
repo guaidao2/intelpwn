@@ -106,7 +106,7 @@ python3 intelpwn.py analyze <binary> --libc /usr/lib/x86_64-linux-gnu/libc.so.6
 # 远程利用
 python3 intelpwn.py analyze <binary> --libc <path> --remote 10.0.0.1:1337
 
-# JSON 输出 (机器可读, schema v1.0)
+# JSON 输出 (机器可读, schema v1.1)
 python3 intelpwn.py analyze <binary> --json
 
 # 批量扫描目录下所有 ELF
