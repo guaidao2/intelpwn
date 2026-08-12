@@ -76,6 +76,28 @@ def _analyze_overflow_inner(elf, path: str) -> list:
     return _analyze_overflow_from_insns(insns, bits, path)
 
 
+def _buf_reg_on_stack(func_insns, call_idx: int, buf_reg: str, window: int = 30) -> bool:
+    """近似数据流: 调用前 window 条指令内, buf_reg 是否被 lea [rbp-X] 赋值。
+
+    通过 mov 传播跟踪 (lea rax,[rbp-X]; mov rsi,rax 也算指向栈),
+    排除从堆/全局加载的目标 (mov rsi,[rip+chunks] / mov rsi,[rbp+8] 参数)。
+    """
+    stack_regs = set()
+    for insn in func_insns[max(0, call_idx - window):call_idx]:
+        m = insn.mnemonic
+        ops = insn.op_str
+        if m == 'lea' and ('rbp' in ops or 'ebp' in ops):
+            dst = ops.split(',')[0].strip()
+            stack_regs.add(dst)
+        elif m == 'mov':
+            parts = ops.split(',')
+            if len(parts) == 2:
+                dst, src = parts[0].strip(), parts[1].strip()
+                if src in stack_regs:
+                    stack_regs.add(dst)
+    return buf_reg in stack_regs
+
+
 def _analyze_overflow_from_insns(insns, bits, path) -> list:
     """反汇编结果分析 — 与反汇编解耦"""
     results = []
@@ -164,6 +186,10 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
 
                 if callee in bounded_inputs:
                     reg64, reg32 = bounded_inputs[callee]
+                    # 缓冲寄存器: read/recv 在 rsi (rdi 是 fd), 其余在 rdi
+                    buf_reg = 'rsi' if callee in ('read', 'recv') else 'rdi'
+                    if bits == 32:
+                        buf_reg = 'esi' if buf_reg == 'rsi' else 'edi'
                     # 大小参数常通过 mov reg, imm 或 mov reg, [reg+disp] 传入
                     for prev in window:
                         if prev.mnemonic == 'mov':
@@ -174,34 +200,27 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
                                     break
                                 except ValueError:
                                     pass
+                    # 目标必须确实指向栈 (lea rbp-X 经 mov 传播), 否则是堆/全局写, 不是栈溢出
+                    stack_linked = _buf_reg_on_stack(func_insns, idx, buf_reg)
                     if arg_size > 0:
-                        truly_dangerous = arg_size > stack_size + 16
+                        truly_dangerous = stack_linked and arg_size > stack_size + 16
                     else:
-                        # 大小无法静态确定 (来自变量/寄存器) → 保守报险, 降置信度
-                        truly_dangerous = True
-                        conf = "中"
+                        # 大小无法静态确定 → 仅当目标确认在栈上才保守报险
+                        truly_dangerous = stack_linked
+                        if truly_dangerous:
+                            conf = "中"
 
                 elif callee in unbounded_writes:
-                    # 无界写: 第一个参数 (rdi/edi) 指向栈缓冲 → 危险
+                    # 无界写: 第一个参数 (rdi/edi) 必须指向栈缓冲
                     first_reg = 'rdi' if bits == 64 else 'edi'
-                    for prev in window:
-                        if prev.mnemonic == 'lea' and first_reg in prev.op_str:
-                            truly_dangerous = True
-                            break
-                    if not truly_dangerous and has_lea:
-                        truly_dangerous = True
-                        conf = "中"
+                    truly_dangerous = _buf_reg_on_stack(func_insns, idx, first_reg)
 
                 elif callee == 'scanf':
                     # 格式串含无宽度 %s → 危险; 否则 (如 %d/%x) 不是溢出源
                     fmt = _resolve_scanf_format(path, window, bits)
                     if fmt and re.search(r'%[0-9]*s', fmt) and not re.search(r'%[0-9]+s', fmt):
                         first_reg = 'rdi' if bits == 64 else 'edi'
-                        if any(p.mnemonic == 'lea' and first_reg in p.op_str for p in window):
-                            truly_dangerous = True
-                        elif has_lea:
-                            truly_dangerous = True
-                            conf = "中"
+                        truly_dangerous = _buf_reg_on_stack(func_insns, idx, first_reg)
 
                 if truly_dangerous:
                     has_danger = True
