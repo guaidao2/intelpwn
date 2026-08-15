@@ -290,6 +290,9 @@ def serve(results: dict, binary: str, host: str = "0.0.0.0",
     url = f"http://{host}:{final_port}/"
     print(f"[+] 可视化服务已启动: {url}")
     print(f"    分析目标: {binary}")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        print(f"    [注意] 监听 {host}: 局域网内其他主机可访问该分析页面, "
+              f"敌对网络请用 --web-host 127.0.0.1 锁定")
     print("    按 Ctrl-C 停止服务")
     if open_browser:
         try:
