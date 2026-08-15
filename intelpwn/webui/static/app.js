@@ -1,6 +1,11 @@
 /* IntelPwn 可视化前端 — 总览 / 反汇编 / CFG 三视图 */
 "use strict";
 
+// dagre 布局插件注册 (cytoscape-dagre 依赖 window.dagre, 已在 index.html 先行加载)
+if (typeof cytoscape !== "undefined" && typeof cytoscapeDagre !== "undefined") {
+  cytoscape.use(cytoscapeDagre);
+}
+
 let currentFunc = null;
 let funcs = [];
 let cy = null;
@@ -170,8 +175,9 @@ async function renderCFG(f) {
       container: div,
       elements,
       style: [
+        // 普通块: 深蓝底
         { selector: "node", style: {
-            "background-color": "data(vuln) ? #f85149 : #1f3a5f",
+            "background-color": "#1f3a5f",
             "border-color": "#30363d", "border-width": 1,
             "color": "#c9d1d9", "font-size": "11px",
             "text-valign": "bottom", "text-margin-y": 2,
@@ -179,7 +185,12 @@ async function renderCFG(f) {
             "width": 130, "height": "label",
             "shape": "round-rectangle",
           } },
-        { selector: "node[vuln]", style: { "border-color": "#f85149", "border-width": 2 } },
+        // 漏洞块: 红色底 + 红边 (定点标记)
+        { selector: "node[vuln]", style: {
+            "background-color": "#f85149",
+            "border-color": "#ff7b72", "border-width": 2,
+            "color": "#ffffff", "font-weight": "bold",
+          } },
         { selector: "edge", style: {
             "curve-style": "bezier", "target-arrow-shape": "triangle",
             "line-color": "#30363d", "target-arrow-color": "#30363d",

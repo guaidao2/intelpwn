@@ -25,15 +25,23 @@
     <section id="tab-overview" class="tab-panel active"></section>
     <section id="tab-disasm" class="tab-panel">
       <h2 id="disasm-title">选择左侧函数查看反汇编</h2>
+      <div class="legend">
+        <span class="lg lg-vuln"></span>危险调用 <span class="lg lg-lea"></span>栈缓冲 (lea rbp) <span class="lg lg-call"></span>call
+      </div>
       <pre id="disasm-box"></pre>
     </section>
     <section id="tab-cfg" class="tab-panel">
       <h2 id="cfg-title">选择左侧函数查看 CFG</h2>
+      <div class="legend">
+        <span class="lg lg-vuln"></span>漏洞块 (含危险调用) <span class="lg lg-norm"></span>普通块
+      </div>
       <div id="cy"></div>
     </section>
   </main>
 </div>
 <script src="/static/cytoscape.min.js"></script>
+<script src="/static/dagre.min.js"></script>
+<script src="/static/cytoscape-dagre.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
