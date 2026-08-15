@@ -42,6 +42,7 @@
 | **堆漏洞线索** | 同函数多 free (double-free) / malloc 大小算术运算 (整数溢出) / 循环内 free (UAF 场景) | 启发式提示 |
 | **angr 符号执行** | 主动发现: 全量枚举危险调用点 (可达性 + 栈目标 + 大小 taint), 静态漏检的 strcpy 等无界写也能发现并算 padding; 溢出点符号化 padding 交叉确认 | 可选插件 |
 | **汇编自动注释** | 三级注释引擎: 漏洞链(红, 危险输入点/可溢出字节数/返回地址改写点, 来自分析结论) · 风险提示(黄, syscall 号/canary/敏感函数, 规则猜测) · 语义标注(灰, 序言/栈帧/PLT 调用解析); 供 `--web` 反汇编视图 | 规则引擎 |
+| **菜单交互识别** | scanf 数字菜单双通道识别 (rodata "N. 名称" 菜单项 + cmp/je 分支链) → options 映射表 {选项: {handler, 参数结构}}; 伪菜单防护 (仅明确触发漏洞函数的选项才自动交互) | 通用基础设施 |
 | **利用策略生成** | 基于保护状态 + 可用函数 + ROP → 自动推导方案 | 多种策略 |
 
 ### Exploit 生成
@@ -52,7 +53,8 @@
 | **int 0x80 execve 链** (x86 32 位) | `gen_int80_execve` | pop_eax/ebx/ecx/edx + int 0x80, eax=0x0b |
 | **ret2system** (`system@plt` + `/bin/sh`) | `gen_ret2system` | 64 位需 pop_rdi; **32 位栈传参免 gadget**; **静态链接固定地址 (static_libc)** |
 | **ret2libc** (leak + ret2system) | `gen_ret2libc` | 64 位有 pop_rdi 时自动; **32 位栈传参布局** |
-| **ret2dlresolve** (无 libc) | `gen_ret2dlresolve` | read@plt + 可写 BSS + 非 Full RELRO; **注意 glibc>=2.40 已失效, 模板自动检测并 WARN** |
+| **leak 解法** (无 system/no-read, glibc>=2.40 通用) | `gen_leak_ret2libc` | puts@got 泄漏 → libc 基址 → ret2system; 自动栈对齐 (重入帧偏移), 有 `--libc` 全自动否则引导查偏移 |
+| **ret2dlresolve** (无 libc) | `gen_ret2dlresolve` | read@plt **或 gets@plt** + 可写 BSS + 非 Full RELRO; **glibc>=2.40 本地场景脚本运行时自检+指引, 远程不误杀** |
 | **SROP** (sigreturn) | `gen_srop` | 有 syscall;ret + pop 三件套 + read@plt — **Kali 实测打穿** |
 | **shellcode 注入** (NX 关闭) | `gen_shellcode` | 无 jmp_rsp gadget 时不生成断路径 |
 | **Canary 爆破 + ret2win** | `gen_canary_ret2win` | 4/8 字节自适应; 支持 `--remote` fork 服务器 |
@@ -67,6 +69,7 @@
 - `read()` 系溢出使用 `send()` 而非 `sendline()`
 - 关键 gadget 缺失时输出 `# [WARN]` 注释 + 修复命令
 - 无法自动利用时明确标注 `[骨架]`, 不输出看似可用实则必崩的脚本
+- **菜单题自动预交互**: 识别到数字菜单且明确触发漏洞函数的选项时, 自动注入 `recvuntil(锚点) + sendline(选项)` (所有模板受益, 无需手动选菜单)
 
 ### 输出格式
 
@@ -148,7 +151,7 @@ API: `GET /api/functions` `/api/disasm/<addr>` `/api/cfg/<addr>` `/api/report` (
 ### 运行测试
 
 ```bash
-# 单元测试 (108 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
+# 单元测试 (155 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
 python3 -m pytest tests/ -v
 ```
 
@@ -156,7 +159,7 @@ python3 -m pytest tests/ -v
 
 ## 支持的 Challenge 类型
 
-项目包含 8 道预设 CTF 练习题，覆盖主流 pwn 题型:
+项目包含 14 道预设 CTF 练习题 (含 32 位 x86 与静态链接), 覆盖主流 pwn 题型:
 
 | Challenge | 保护 | 漏洞 | 自动 exp |
 |---|---|---|---|
@@ -193,6 +196,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 │   ├── heap.py                      堆函数检测 + 静态线索 + glibc 版本行为表
 │   ├── comments.py                  汇编三级自动注释引擎 (漏洞链/风险/语义)
 │   ├── findings.py                  漏洞总结 + 策略生成
+│   ├── menu.py                      菜单交互识别 (scanf 数字菜单 → options 映射, 通用基础设施)
 │   └── angr_analysis.py             angr 插件 (主动发现/可达性/padding, 自注册)
 ├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v1.1)
 ├── intelpwn/core/exploit.py         exploit 模板生成器 (注册表驱动, 插件可挂模板)
@@ -203,7 +207,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
 ├── challenges/                      14 道 CTF 练习题 (含 32 位 + 静态链接)
-├── tests/                           108 个单元测试
+├── tests/                           155 个单元测试
 ├── schema/intelpwn.schema.json      JSON 输出 schema
 └── install.sh                       依赖安装 (apt + 隔离 venv)
 ```
@@ -294,7 +298,7 @@ register_exploit_template("my_exploit", predicate, gen, priority=5)
 | 符号执行验证 | 支持 (angr 插件) | 不支持 | 不支持 | 不支持 |
 | 批量扫描 + JSON | 支持 (--dir + schema) | 不支持 | 不支持 | 不支持 |
 | 中文报告 | 支持 | 不支持 | 不支持 | 不支持 |
-| 单元测试 | 108 用例 | - | - | - |
+| 单元测试 | 155 用例 | - | - | - |
 
 ---
 
