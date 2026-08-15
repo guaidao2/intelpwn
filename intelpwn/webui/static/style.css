@@ -36,8 +36,10 @@ pre { white-space: pre-wrap; word-break: break-all; }
         border-radius: 6px; padding: 12px 14px; margin-bottom: 12px;
         overflow: hidden; }  /* 防止长内容溢出压到相邻卡片 */
 .card h3 { color: var(--accent); font-size: 13px; margin-bottom: 8px; }
-/* 1fr → minmax(0,1fr): 允许值列收缩换行而不是溢出重叠 (GOT 地址+[LEAK] 等长内容) */
-.kv { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 4px 12px; }
+/* 1fr → minmax(0,1fr): 允许值列收缩换行而不是溢出重叠 (GOT 地址+[LEAK] 等长内容)
+   键列 minmax(110px, max-content): 随内容/字体自适应 (长符号名如 _ITM_deregisterTMCloneTable
+   不再被固定 140px 截断溢出到值列), 短键仍对齐在 110px */
+.kv { display: grid; grid-template-columns: minmax(110px, max-content) minmax(0, 1fr); gap: 4px 12px; }
 .kv .k { color: var(--dim); }
 .kv > * { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .sev-high { color: var(--danger); font-weight: bold; }
