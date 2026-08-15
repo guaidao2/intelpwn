@@ -37,6 +37,7 @@
 | **CFG 复杂度** | 指令流直接计数边和节点 (去 NetworkX) | 5ms vs 500ms |
 | **堆漏洞线索** | 同函数多 free (double-free) / malloc 大小算术运算 (整数溢出) / 循环内 free (UAF 场景) | 启发式提示 |
 | **angr 符号执行** | 主动发现: 全量枚举危险调用点 (可达性 + 栈目标 + 大小 taint), 静态漏检的 strcpy 等无界写也能发现并算 padding; 溢出点符号化 padding 交叉确认 | 可选插件 |
+| **汇编自动注释** | 三级注释引擎: 🔴 漏洞链 (危险输入点/可溢出字节数/返回地址改写点, 来自分析结论) · 🟡 风险提示 (syscall 号/canary/敏感函数, 规则猜测) · ⚪ 语义标注 (序言/栈帧/PLT 调用解析); 供 `--web` 反汇编视图 | 规则引擎 |
 | **利用策略生成** | 基于保护状态 + 可用函数 + ROP → 自动推导方案 | 多种策略 |
 
 ### Exploit 生成
@@ -67,6 +68,7 @@
 - **终端报告**: 中文报告 (漏洞汇总 + 保护状态 + 栈布局 + ROP 列表 + angr 符号执行 + 修复建议)
 - **JSON 输出**: `--json` 参数 → schema v1.1 (见 `schema/intelpwn.schema.json`), 可管道给 jq / CI
 - **批量扫描**: `--dir <目录>` 扫描目录下所有 ELF, 输出汇总表或 JSON 数组
+- **Web 可视化**: `--web` 参数 → 本地交互界面 (总览 + 反汇编三级注释 + CFG 图, 见下节)
 
 ---
 
@@ -117,12 +119,31 @@ python3 intelpwn.py verify <binary>
 
 # 抑制 exploit 自动生成
 python3 intelpwn.py analyze <binary> --no-exploit
+
+# 可视化分析 (本地 web 界面: 总览 + 反汇编三级注释 + 交互 CFG 图)
+python3 intelpwn.py analyze <binary> --web
+# 默认监听 0.0.0.0:5000 (Kali VM 场景宿主机可访问); 可指定端口/锁定本机
+python3 intelpwn.py analyze <binary> --web --web-port 9000 --web-host 127.0.0.1
 ```
+
+### 可视化分析 (`--web`)
+
+`analyze --web` 在本地起一个 web 服务 (默认 `0.0.0.0:5000`, Kali VM 场景宿主机浏览器直接访问 VM IP), 把分析结果渲染成可交互的漏洞视图:
+
+| 视图 | 内容 |
+|---|---|
+| **总览** | 保护状态 / 溢出 / ret2text 目标 / 交叉验证结论 摘要 |
+| **反汇编** | 每行指令带**三级自动注释**: 🔴 漏洞链 (危险输入点/可溢出字节数/padding/返回地址改写点) · 🟡 风险提示 (syscall 号/canary/敏感函数, 规则猜测) · ⚪ 语义标注 (序言/栈帧/PLT 调用解析); 红注释始终显示, 黄/灰可开关 |
+| **CFG 交互图** | IDA 式控制流图 (cytoscape/dagre), 漏洞块红色高亮自动选中, 点节点在右侧独立面板查看块内反汇编 |
+
+API: `GET /api/functions` `/api/disasm/<addr>` `/api/cfg/<addr>` `/api/report` (JSON, 供二次开发)。
+
+> 安全提示: 默认 0.0.0.0 会把分析数据暴露给局域网; 敌对网络请用 `--web-host 127.0.0.1` 锁定本机。
 
 ### 运行测试
 
 ```bash
-# 单元测试 (28 个用例)
+# 单元测试 (48 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
 python3 -m pytest tests/ -v
 ```
 
@@ -163,15 +184,19 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 │   ├── bss.py                       BSS 符号扫描
 │   ├── cfg.py                       CFG 圈复杂度 (无 NetworkX)
 │   ├── heap.py                      堆函数检测 + 静态线索
+│   ├── comments.py                  汇编三级自动注释引擎 (漏洞链/风险/语义)
 │   ├── findings.py                  漏洞总结 + 策略生成
 │   └── angr_analysis.py             angr 插件 (主动发现/可达性/padding, 自注册)
 ├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v1.1)
 ├── intelpwn/core/exploit.py         exploit 模板生成器
 ├── intelpwn/core/verify.py          定点验证 (cyclic 偏移提取)
+├── intelpwn/core/cross_validate.py  静态 vs 动态交叉验证 (确认/未复现/动态发现/canary拦截)
+├── intelpwn/core/webui.py           --web 可视化服务 (总览/反汇编注释/CFG 交互图)
+├── intelpwn/webui/static/           前端单页 (app.js/index.html/style.css + cytoscape/dagre)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
-├── challenges/                      8 道 CTF 练习题
-├── tests/                           28 个单元测试
+├── challenges/                      12 道 CTF 练习题
+├── tests/                           48 个单元测试
 ├── schema/intelpwn.schema.json      JSON 输出 schema
 └── install.sh                       依赖安装 (apt + 隔离 venv)
 ```
