@@ -472,32 +472,35 @@ if (crtToggle) {
   };
 }
 
-/* 可拖拽分隔条: 图 / 汇编面板宽度手调 (自适应) */
-function enableDragHandle(handleId, panelId) {
+/* 可拖拽分隔条: 图 / 汇编面板宽度手调 (自适应) — 基于拖拽增量, 双向对称 */
+function enableDragHandle(handleId, panelId, cyRef) {
   const handle = document.getElementById(handleId);
   const panel = document.getElementById(panelId);
   if (!handle || !panel) return;
-  let dragging = false;
-  const wrap = handle.parentElement;
+  let startX = 0, startW = 0, dragging = false;
   handle.addEventListener("mousedown", e => {
     dragging = true;
+    startX = e.clientX;
+    startW = panel.getBoundingClientRect().width;
     handle.classList.add("dragging");
     e.preventDefault();
   });
   document.addEventListener("mousemove", e => {
     if (!dragging) return;
-    const rect = wrap.getBoundingClientRect();
-    // 面板宽 = 容器右缘 - 鼠标 x - 右内边距; 限制 240~520px
-    let w = rect.right - e.clientX - 10;
-    w = Math.max(240, Math.min(520, w));
+    // 左拖 (clientX 减小) → 面板变宽; 右拖 → 变窄
+    let w = startW + (startX - e.clientX);
+    w = Math.max(240, Math.min(560, w));
     panel.style.width = w + "px";
+    // 图容器尺寸变了, 实时重排 canvas (自适应)
+    const inst = cyRef ? cyRef() : null;
+    if (inst) inst.resize();
   });
   document.addEventListener("mouseup", () => {
     if (dragging) { dragging = false; handle.classList.remove("dragging"); }
   });
 }
-enableDragHandle("cfg-handle", "cfg-detail");
-enableDragHandle("cg-handle", "cfg-detail-callgraph");
+enableDragHandle("cfg-handle", "cfg-detail", () => cy);
+enableDragHandle("cg-handle", "cfg-detail-callgraph", () => cg);
 
 /* ── 初始化 ───────────────────────────────────────── */
 (async function init() {
