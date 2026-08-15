@@ -85,6 +85,108 @@ function renderOverview(report) {
       <span class="k">详情</span><span>${esc(f.detail)}</span>
     </div>`).join("") || "<span class='hint'>无</span>");
 
+  // 格式化字符串
+  const fs = report.format_string || {};
+  addCard("格式化字符串", fs.vulnerable ? `
+    <div class="kv"><span class="k">状态</span><span class="sev-high">发现漏洞</span></div>
+    ${fs.best_offset ? `<div class="kv"><span class="k">最佳偏移</span><span>${esc(fs.best_offset)} (可用 %${esc(fs.best_offset)}$p 泄露)</span></div>` : ""}
+    <div class="kv"><span class="k">证据</span><span>${esc((fs.evidence || []).join("; ")) || "—"}</span></div>
+    <div class="kv"><span class="k">利用</span><span>%n 覆写 GOT → 劫持控制流</span></div>`
+    : "<span class='hint'>未检测到格式化字符串漏洞</span>");
+
+  // 栈布局 (推导自 overflow[0])
+  const ov0 = ov[0];
+  if (ov0 && ov0.stack_size != null) {
+    const bitsSz = /64/.test(String(report.bits || (p.bits || ""))) ? 8 : 4;
+    const padN = parseInt(ov0.calculated_padding || 0, 10) || 0;
+    const stk = parseInt(ov0.stack_size || 0, 10) || 0;
+    const align = padN - stk - bitsSz;
+    addCard("栈布局", `
+      <div class="kv">
+        <span class="k">布局</span>
+        <span>[bof(${stk})]${align > 0 ? ` + [对齐(${align})]` : ""} + [saved_rbp(${bitsSz})] + [ret_addr]</span>
+      </div>
+      <div class="kv"><span class="k">padding</span><span class="sev-high">${padN}</span></div>
+      <div class="kv"><span class="k">含义</span><span>填充 ${padN} 字节后覆盖返回地址</span></div>`);
+  }
+
+  // ROP Gadgets
+  const rop = report.rop || {};
+  const known = { pop_rdi: "ret2libc 必备", pop_rsi: "第二参数", pop_rdx: "第三参数",
+                  ret: "栈对齐 (绕过 movaps)", pop_eax: "syscall 编号", int_0x80: "系统调用" };
+  const ropList = Object.entries(known)
+    .map(([g, hint]) => [g, rop[g]])
+    .filter(([, a]) => a && a !== "未找到" && typeof a !== "object");
+  addCard("ROP Gadgets", ropList.length ? ropList.map(([g, a]) => `
+    <div class="kv"><span class="k">${esc(g)}</span><span>${esc(a)} <span class="hint">← ${esc(known[g])}</span></span></div>`).join("")
+    + `<div class="kv"><span class="k">共</span><span>${ropList.length} 个可用 gadgets</span></div>`
+    : "<span class='hint'>未找到关键 ROP gadgets</span>");
+
+  // GOT 表
+  const got = report.got || {};
+  const gotList = Object.entries(got);
+  if (gotList.length) {
+    const leakTag = { puts: "LEAK", write: "LEAK", printf: "FMT", read: "BOF", gets: "BOF" };
+    addCard(`GOT 表 (${gotList.length})`, gotList.map(([n, a]) => `
+      <div class="kv"><span class="k">${esc(n)}</span><span>${esc(a)}${leakTag[n] ? ` <span class="hint">[${leakTag[n]}]</span>` : ""}</span></div>`).join(""));
+  }
+
+  // BSS / 可写内存
+  const bss = report.bss_writable || [];
+  if (bss.length) {
+    addCard(`BSS / 可写内存 (${bss.length})`, bss.map(b => `
+      <div class="kv"><span class="k">${esc(b.name)}</span><span>${esc(b.addr)}, size=${esc(b.size)}</span></div>`).join(""));
+  }
+
+  // 关键资源
+  const hasBinsh = report.has_binsh;
+  if (hasBinsh != null) {
+    addCard("关键资源", `<div class="kv"><span class="k">/bin/sh</span>` +
+      (hasBinsh ? `<span class="sev-low">存在于二进制 → 可直接 ret2system</span>` : `<span>不在二进制 → 需从 libc 找</span>`) + `</div>`);
+  }
+
+  // 堆分析
+  const heap = report.heap_analysis || {};
+  if (heap && heap.has_heap) {
+    addCard("堆分析", `
+      <div class="kv"><span class="k">堆函数</span><span>${esc((heap.functions || []).join(", "))}</span></div>
+      <div class="kv"><span class="k">复杂度</span><span>${esc(heap.complexity)} (函数数 ${esc(heap.function_count)})${heap.complexity > 30 ? " <span class='sev-mid'>→ 可能含堆漏洞</span>" : ""}</span></div>
+      ${(heap.clues || []).map(c => `<div class="kv"><span class="${c.severity === '高危' || c.severity === '严重' ? 'sev-high' : 'sev-mid'}">${esc(c.severity)}</span><span>${esc(c.detail)}</span></div>`).join("")}`);
+  }
+
+  // angr 符号执行
+  const angr = report.angr_check || {};
+  if (angr && Object.keys(angr).length) {
+    let body;
+    if (!angr.available) {
+      body = "<span class='hint'>angr 未安装, 已跳过 (可选: pip install angr)</span>";
+    } else {
+      body = (angr.checks || []).map(ch => {
+        const rch = ch.reachability || {};
+        const sc = ch.size_check || {};
+        let line = `<div class="kv"><span class="k">${esc(ch.function)}</span>`;
+        if (rch.reachable) {
+          line += `<span class="sev-low">可达</span>`;
+          if (sc.status === "concrete")
+            line += `<span class="${sc.dangerous ? 'sev-high' : 'sev-low'}">大小=${esc(sc.size)} ${sc.dangerous ? "超过栈缓冲" : "未超过"}</span>`;
+          else if (sc.status === "symbolic")
+            line += `<span class="${sc.dangerous ? 'sev-high' : 'sev-mid'}">符号大小, 最大=${esc(sc.max_possible)}</span>`;
+        } else if (rch.reachable === false) {
+          line += `<span class="sev-mid">不可达 (疑似死代码)</span>`;
+        } else {
+          line += `<span class="hint">可达性未知 (${esc(rch.reason || "")})</span>`;
+        }
+        return line + `</div>`;
+      }).join("");
+      body += (angr.int_overflow || []).map(i => `<div class="kv"><span class="k">整数溢出</span><span class="sev-mid">${esc(i.detail)}</span></div>`).join("");
+      body += (angr.discovered || []).map(d => {
+        const tag = d.status === "exploitable" ? "sev-high" : d.status === "truncated" ? "sev-mid" : "hint";
+        return `<div class="kv"><span class="k">主动发现</span><span class="${tag}">${esc(d.detail || d.function || "")}</span></div>`;
+      }).join("");
+    }
+    addCard("符号执行 (angr)", body || "<span class='hint'>无</span>");
+  }
+
   document.getElementById("binary-name").textContent =
     report.path ? "目标: " + report.path : "";
 }
