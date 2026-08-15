@@ -54,18 +54,23 @@ def _imm_value(op_str):
 
 
 def _buf_ref(op_str):
-    """从 lea 操作数提取栈缓冲引用: [rbp-0x20] → ('rbp', 0x20); 无则 None"""
-    m = re.search(r'\[(r?bp|r?sp)([+-]0x[0-9a-f]+)\]', op_str, re.I)
+    """从 lea 操作数提取栈缓冲引用: Capstone x86 Intel 输出带空格如 [rbp - 0x20] → ('rbp', 0x20); 无则 None"""
+    op_str = op_str or ""
+    m = re.search(r'\[(r?bp|r?sp)\s*([+-])\s*0x([0-9a-f]+)\]', op_str, re.I)
     if not m:
         return None
     try:
-        return m.group(1).lower(), int(m.group(2), 16)
+        val = int(m.group(3), 16)
+        return m.group(1).lower(), (-val if m.group(2) == '-' else val)
     except ValueError:
         return None
 
 
 def _call_target_addr(op_str):
-    """call/jmp 操作数 → 目标地址 (int) 或 None"""
+    """call/jmp 操作数 → 直接目标地址 (int) 或 None. 间接调用 (含 []) 返回 None"""
+    op_str = op_str or ""
+    if "[" in op_str:
+        return None  # 间接调用 (call qword ptr [rip+...]), 目标地址不可静态解析
     m = re.search(r'0x([0-9a-f]+)', op_str, re.I)
     if not m:
         return None
@@ -82,6 +87,14 @@ def _reg_prefixed(ops, reg):
         return True
     w32 = {"rdx": "edx", "rsi": "esi", "rdi": "edi", "rax": "eax", "rcx": "ecx"}
     return w32.get(reg) is not None and ops.startswith(w32[reg])
+
+
+def _is_last_ret(idx, ins):
+    """该 ret 是否为函数内最后一个 ret (尾声返回)"""
+    for i in range(idx + 1, len(ins)):
+        if ins[i]["mnemonic"] == "ret":
+            return False
+    return True
 
 
 def _find_call_idx(ins, call_site):
@@ -106,14 +119,12 @@ def annotate_disasm(lines, entry=None, sym_map=None):
     # ── 上下文: 漏洞条目 ──
     call_site = padding = stack_size = func_name = None
     if entry:
-        for key, dest in (("call_site", "call_site"), ("dangerous_call", "call_site")):
-            raw = entry.get(key)
-            if raw:
-                try:
-                    call_site = int(raw, 16)
-                    break
-                except (ValueError, TypeError):
-                    continue
+        raw = entry.get("call_site")
+        if raw:
+            try:
+                call_site = int(raw, 16)
+            except (ValueError, TypeError):
+                call_site = None
         try:
             padding = int(entry.get("calculated_padding") or 0) or None
         except (ValueError, TypeError):
@@ -141,7 +152,8 @@ def annotate_disasm(lines, entry=None, sym_map=None):
             m, ops = ins[j]["mnemonic"], ins[j]["op_str"]
             if buf_reg and buf_load_idx is None and m == "lea":
                 ref = _buf_ref(ops)
-                if ref and (ref[0] in ("rbp", "ebp", "rsp", "esp")):
+                # 目标寄存器必须是危险调用的缓冲寄存器 (如 read → rsi)
+                if ref and (ref[0] in ("rbp", "ebp", "rsp", "esp")) and _reg_prefixed(ops, buf_reg):
                     buf_load_idx = j
             if size_reg and size_load_idx is None and m in ("mov", "movl"):
                 if _reg_prefixed(ops, size_reg):
@@ -175,7 +187,7 @@ def annotate_disasm(lines, entry=None, sym_map=None):
                 else:
                     note = f"读取大小 {v:#x}={v}"
                     level = "gray"
-        elif mnem == "ret" and call_site:
+        elif mnem == "ret" and call_site and _is_last_ret(idx, ins):
             note = f"← 返回地址可被溢出改写 (padding={padding})"
             level = "red"
 
@@ -228,12 +240,14 @@ def annotate_disasm(lines, entry=None, sym_map=None):
                 tgt = _call_target_addr(ops)
                 name = sym_map.get(tgt) if tgt is not None else None
                 if name:
-                    note, level = f"call {name}@plt", "gray"
+                    disp = name[:-4] if name.endswith("@plt") else name  # 避免 @plt@plt
+                    note, level = f"call {disp}", "gray"
             elif mnem == "jmp":
                 tgt = _call_target_addr(ops)
                 name = sym_map.get(tgt) if tgt is not None else None
                 if name:
-                    note, level = f"→ 跳转 {name}", "gray"
+                    disp = name[:-4] if name.endswith("@plt") else name
+                    note, level = f"→ 跳转 {disp}", "gray"
 
         out.append({**i, "note": note, "note_level": level})
     return out

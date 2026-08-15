@@ -31,8 +31,10 @@ WEBUI_STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # 每二进制缓存: 反汇编 + 函数边界 (防 LAN 并发请求反复重算拖垮 CPU)
 _disas_cache = {}
 _bounds_cache = {}
+_sym_map_cache = {}
 _disas_lock = threading.Lock()
 _bounds_lock = threading.Lock()
+_sym_lock = threading.Lock()
 # 并发上限: 避免无界线程耗尽资源
 _heavy_sem = threading.Semaphore(4)
 
@@ -66,6 +68,32 @@ def _func_bounds(path):
             pass
         _bounds_cache[path] = funcs
         return funcs
+
+
+def _sym_map_for(path):
+    """符号表 {addr: 函数名} — 按二进制缓存. 含 PLT stub 解析 (symtab 无 read@plt 类条目)"""
+    with _sym_lock:
+        if path in _sym_map_cache:
+            return _sym_map_cache[path]
+    smap = {}
+    try:
+        with open_elf(path) as elf:
+            for sec_name in ('.symtab', '.dynsym'):
+                sec = elf.get_section_by_name(sec_name)
+                if sec:
+                    for sym in sec.iter_symbols():
+                        if sym.name and sym['st_info']['type'] == 'STT_FUNC':
+                            smap[sym['st_value']] = sym.name
+        # PLT stub 地址 → 符号名 (经 .rela.plt/.plt 解析, 与 overflow.py 同法)
+        from pwnlib.elf.elf import ELF as PwnELF
+        pelf = PwnELF(path)
+        for name, stub in pelf.plt.items():
+            smap[stub] = name + "@plt"
+    except Exception:
+        pass
+    with _sym_lock:
+        _sym_map_cache[path] = smap
+    return smap
 
 
 def _get_disas(path):
@@ -200,14 +228,7 @@ class _Handler(BaseHTTPRequestHandler):
         # 三级自动注释
         try:
             from intelpwn.core.analysis.comments import annotate_disasm
-            sym_map = {}
-            with open_elf(self.binary) as elf:
-                for sec_name in ('.symtab', '.dynsym'):
-                    sec = elf.get_section_by_name(sec_name)
-                    if sec:
-                        for sym in sec.iter_symbols():
-                            if sym.name and sym['st_info']['type'] == 'STT_FUNC':
-                                sym_map[sym['st_value']] = sym.name
+            sym_map = _sym_map_for(self.binary)
             lines = annotate_disasm(lines, entry, sym_map)
         except Exception:
             for ln in lines:

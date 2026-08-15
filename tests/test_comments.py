@@ -17,7 +17,7 @@ LINES = [
     {"addr": 0x401185, "mnemonic": "push", "op_str": "rbp"},
     {"addr": 0x401186, "mnemonic": "mov", "op_str": "rbp, rsp"},
     {"addr": 0x401189, "mnemonic": "sub", "op_str": "rsp, 0x20"},
-    {"addr": 0x4011a0, "mnemonic": "lea", "op_str": "rsi, [rbp-0x20]"},
+    {"addr": 0x4011a0, "mnemonic": "lea", "op_str": "rsi, [rbp - 0x20]"},
     {"addr": 0x4011a4, "mnemonic": "mov", "op_str": "edx, 0x100"},
     {"addr": 0x4011a9, "mnemonic": "call", "op_str": "0x401050"},
     {"addr": 0x4011ae, "mnemonic": "test", "op_str": "rax, rax"},
@@ -51,6 +51,19 @@ def test_red_buffer_lea():
     n = _by_addr(out, 0x4011a0)
     assert n["note_level"] == "red"
     assert "缓冲 0x20" in n["note"]
+
+
+def test_spaced_buf_ref_real_capstone():
+    """回归: Capstone x86 Intel 实际输出带空格 [rbp - 0x20] (原正则不匹配 → 注释死代码)"""
+    lines = [
+        {"addr": 0x10, "mnemonic": "lea", "op_str": "rsi, [rbp - 0x20]"},
+        {"addr": 0x14, "mnemonic": "mov", "op_str": "edx, 0x100"},
+        {"addr": 0x19, "mnemonic": "call", "op_str": "0x401050"},
+    ]
+    entry = {"call_site": "0x19", "calculated_padding": 72, "stack_size": 0x20, "function": "f"}
+    out = annotate_disasm(lines, entry, SYM)
+    assert _by_addr(out, 0x10)["note_level"] == "red"
+    assert "缓冲 0x20" in _by_addr(out, 0x10)["note"]
 
 
 def test_red_size_overflow():
@@ -113,7 +126,8 @@ def test_gray_call_resolution():
     lines = [{"addr": 0x10, "mnemonic": "call", "op_str": "0x401050"}]
     out = annotate_disasm(lines, None, SYM)
     assert out[0]["note_level"] == "gray"
-    assert "read@plt" in out[0]["note"]
+    # sym_map 含 @plt 后缀时显示去重: "call read" (不出现 read@plt@plt)
+    assert out[0]["note"] == "call read"
 
 
 def test_gray_xor_zero():
@@ -134,6 +148,40 @@ def test_no_entry_no_red():
     assert all(n["note_level"] != "red" for n in out)
     # 无漏洞上下文时 call 不标红
     assert _by_addr(out, 0x4011a9)["note_level"] == "gray"
+
+
+def test_red_ret_only_epilogue():
+    """多返回值函数: 只有尾声 ret 标红, 中间 ret 不标"""
+    lines = [
+        {"addr": 0x10, "mnemonic": "mov", "op_str": "edi, 0"},
+        {"addr": 0x12, "mnemonic": "call", "op_str": "0x401050"},
+        {"addr": 0x15, "mnemonic": "ret", "op_str": ""},
+        {"addr": 0x20, "mnemonic": "mov", "op_str": "eax, 0"},
+        {"addr": 0x22, "mnemonic": "ret", "op_str": ""},
+    ]
+    entry = {"call_site": "0x12", "calculated_padding": 72, "stack_size": 0x20, "function": "f"}
+    out = annotate_disasm(lines, entry, SYM)
+    assert _by_addr(out, 0x15)["note_level"] is None
+    assert _by_addr(out, 0x22)["note_level"] == "red"
+
+
+def test_indirect_call_no_resolve():
+    """间接调用 (含 []) 不解析目标, 也不报灰"""
+    lines = [{"addr": 0x10, "mnemonic": "call", "op_str": "qword ptr [rip + 0x2000]"}]
+    out = annotate_disasm(lines, None, SYM)
+    assert out[0]["note"] is None
+
+
+def test_lea_wrong_dest_reg_not_annotated():
+    """目标寄存器不是缓冲寄存器时 (read → 应为 rsi), lea 不标红"""
+    lines = [
+        {"addr": 0x10, "mnemonic": "lea", "op_str": "rdi, [rbp - 0x20]"},
+        {"addr": 0x14, "mnemonic": "mov", "op_str": "edx, 0x100"},
+        {"addr": 0x19, "mnemonic": "call", "op_str": "0x401050"},
+    ]
+    entry = {"call_site": "0x19", "calculated_padding": 72, "stack_size": 0x20, "function": "f"}
+    out = annotate_disasm(lines, entry, SYM)
+    assert _by_addr(out, 0x10)["note_level"] is None
 
 
 def test_unrelated_no_note():
