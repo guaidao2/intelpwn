@@ -169,16 +169,17 @@ class _Handler(BaseHTTPRequestHandler):
         return funcs
 
     def _api_disasm(self, func_addr):
-        """函数反汇编, 高亮标记: 危险调用 (mark) / lea 栈缓冲 (lea_stack)"""
+        """函数反汇编, 高亮标记 + 三级自动注释 (漏洞链/风险/语义)"""
         bounds = {s: e for s, e, _ in _func_bounds(self.binary)}
         end = bounds.get(func_addr)
         if not end:
             return {"error": "函数不存在"}
-        call_addr = None
+        entry = None
         for v in self.results.get("overflow", []):
             try:
                 if int(v.get("address", "0x0"), 16) == func_addr:
-                    call_addr = _vuln_call_site(v)
+                    entry = v
+                    break
             except ValueError:
                 pass
         pre = _get_disas(self.binary)
@@ -192,10 +193,26 @@ class _Handler(BaseHTTPRequestHandler):
                 "addr": i.address,
                 "mnemonic": i.mnemonic,
                 "op_str": i.op_str,
-                "mark": i.address == call_addr,
+                "mark": i.address == _vuln_call_site(entry) if entry else False,
                 "lea_stack": i.mnemonic == 'lea' and ('rbp' in i.op_str or 'ebp' in i.op_str),
                 "call": i.mnemonic == 'call',
             })
+        # 三级自动注释
+        try:
+            from intelpwn.core.analysis.comments import annotate_disasm
+            sym_map = {}
+            with open_elf(self.binary) as elf:
+                for sec_name in ('.symtab', '.dynsym'):
+                    sec = elf.get_section_by_name(sec_name)
+                    if sec:
+                        for sym in sec.iter_symbols():
+                            if sym.name and sym['st_info']['type'] == 'STT_FUNC':
+                                sym_map[sym['st_value']] = sym.name
+            lines = annotate_disasm(lines, entry, sym_map)
+        except Exception:
+            for ln in lines:
+                ln.setdefault("note", None)
+                ln.setdefault("note_level", None)
         return {"function": func_addr, "lines": lines}
 
     def _api_cfg(self, func_addr):

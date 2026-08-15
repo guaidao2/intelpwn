@@ -72,3 +72,13 @@ pre { white-space: pre-wrap; word-break: break-all; }
 .lg-lea { background: #6b5a1e; border: 1px solid var(--warn); }
 .lg-call { background: #1f3a5f; border: 1px solid var(--accent); }
 .lg-norm { background: #1f3a5f; border: 1px solid #30363d; }
+.notes-toggle { margin-left: auto; cursor: pointer; color: var(--dim); display: flex; gap: 4px; align-items: center; }
+
+/* 反汇编注释列 (三级) */
+#disasm-box .dline { display: flex; gap: 8px; align-items: baseline; }
+#disasm-box .n { margin-left: auto; white-space: pre-wrap; }
+#disasm-box .n-red { color: #f85149; font-weight: 600; }
+#disasm-box .n-yellow { color: #d29922; }
+#disasm-box .n-gray { color: #6e7681; }
+/* 关闭黄/灰注释 */
+#disasm-box.hide-sub .n-yellow, #disasm-box.hide-sub .n-gray { display: none; }

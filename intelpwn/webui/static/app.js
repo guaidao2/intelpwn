@@ -134,7 +134,8 @@ async function renderDisasm(f) {
                       (line.call ? " call" : "");
       div.innerHTML = `<span class="a">0x${line.addr.toString(16)}</span>` +
                       `<span class="m">${esc(line.mnemonic)}</span>` +
-                      `<span class="o">${esc(line.op_str)}</span>`;
+                      `<span class="o">${esc(line.op_str)}</span>` +
+                      (line.note ? `<span class="n n-${esc(line.note_level)}">; ${esc(line.note)}</span>` : "");
       box.appendChild(div);
     }
   } catch (e) {
@@ -241,6 +242,14 @@ document.querySelectorAll(".tab").forEach(btn => {
     if (btn.dataset.tab === "cfg" && cy) cy.resize();
   };
 });
+
+/* 黄/灰注释开关 (红注释始终显示) */
+const notesToggle = document.getElementById("notes-toggle");
+if (notesToggle) {
+  notesToggle.onchange = () => {
+    document.getElementById("disasm-box").classList.toggle("hide-sub", !notesToggle.checked);
+  };
+}
 
 /* ── 初始化 ───────────────────────────────────────── */
 (async function init() {
