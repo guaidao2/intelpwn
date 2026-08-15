@@ -97,7 +97,7 @@ function renderOverview(report) {
   // 栈布局 (推导自 overflow[0])
   const ov0 = ov[0];
   if (ov0 && ov0.stack_size != null) {
-    const bitsSz = /64/.test(String(report.bits || (p.bits || ""))) ? 8 : 4;
+    const bitsSz = /64/.test(String(p.bits || "")) ? 8 : 4;
     const padN = parseInt(ov0.calculated_padding || 0, 10) || 0;
     const stk = parseInt(ov0.stack_size || 0, 10) || 0;
     const align = padN - stk - bitsSz;
@@ -180,8 +180,16 @@ function renderOverview(report) {
       }).join("");
       body += (angr.int_overflow || []).map(i => `<div class="kv"><span class="k">整数溢出</span><span class="sev-mid">${esc(i.detail)}</span></div>`).join("");
       body += (angr.discovered || []).map(d => {
-        const tag = d.status === "exploitable" ? "sev-high" : d.status === "truncated" ? "sev-mid" : "hint";
-        return `<div class="kv"><span class="k">主动发现</span><span class="${tag}">${esc(d.detail || d.function || "")}</span></div>`;
+        let desc = "";
+        if (d.status === "truncated") desc = d.reason || "符号执行截断";
+        else if (d.vuln === "unbounded_write")
+          desc = "无界写 → 栈上溢出" + (d.padding != null ? ` padding=${d.padding}` : "");
+        else if (d.size_symbolic)
+          desc = `大小符号化 最大=${d.max_possible}` + (d.dangerous ? " 可能溢出" : "");
+        else if (d.dangerous) desc = `大小=${d.size} 超过栈缓冲`;
+        if (d.discovered_by === "angr") desc += " [angr 主动发现]";
+        const tag = (d.dangerous || d.vuln) ? "sev-high" : d.status === "truncated" ? "sev-mid" : "hint";
+        return `<div class="kv"><span class="k">${esc(d.callee)}</span><span class="${tag}">${esc(desc)}${d.stack_buf ? " 栈上" : ""}</span></div>`;
       }).join("");
     }
     addCard("符号执行 (angr)", body || "<span class='hint'>无</span>");
