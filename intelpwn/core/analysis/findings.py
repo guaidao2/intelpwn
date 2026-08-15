@@ -71,8 +71,18 @@ def generate_findings(result: dict) -> dict:
 
     # ROP
     rop = result.get("rop", {})
+    shstk_on = bool(result.get("protections", {}).get("shstk", False))
     for chain in rop.get("chains", []):
         if chain.get("feasible"):
+            if shstk_on:
+                # CET 影子栈: ret 链每跳被硬件校验, 自动利用不可行 (诚实标注, 不误报)
+                findings.append({
+                    "type": f"ROP策略: {chain['type']} (受CET影子栈阻断)",
+                    "detail": "CET影子栈(SHSTK)开启: 传统 ret 链被硬件阻断, 自动利用不可行",
+                    "severity": "中危",
+                    "exploitable": False,
+                })
+                continue
             findings.append({
                 "type": f"ROP策略: {chain['type']}",
                 "detail": chain['condition'],

@@ -112,12 +112,18 @@ def detect_format_string(path: str, insns=None, bits=None) -> dict:
     """黑盒检测格式化字符串 + 自动定位偏移。返回英文键。
 
     优化：将 8 次串行 subprocess 合并为 4 批，减少等待时间。
+    黑盒超时按二进制大小自适应: 静态链接大二进制 (1MB+) 启动慢,
+    固定 3s 会随机失败 (探测结果不稳定)。
 
     Args:
         path: 二进制路径
         insns: 可选预反汇编指令列表（避免重复反汇编）
         bits: 可选预检测位数
     """
+    try:
+        probe_timeout = 3.0 if os.path.getsize(path) < 300_000 else 8.0
+    except OSError:
+        probe_timeout = 3.0
     ctx = _fmtstr_static_context(path, insns=insns, bits=bits)
 
     # 静态分析确认安全 → 直接跳过黑盒
@@ -140,7 +146,7 @@ def detect_format_string(path: str, insns=None, bits=None) -> dict:
 
     # ── 批次 1: 泄漏检测 + 偏移定位（合并 %x/%p/%s + AAAA 链）──
     leak_payload = "AAAA%p|%x|" + "%x" * 16  # 覆盖泄漏 + 偏移
-    r1 = _run_payload(path, leak_payload, "泄漏+偏移探测", timeout=3)
+    r1 = _run_payload(path, leak_payload, "泄漏+偏移探测", timeout=probe_timeout)
     if r1["timed_out"]:
         evidence.append("[泄漏探测] 超时")
         vulnerable = True
@@ -163,7 +169,7 @@ def detect_format_string(path: str, insns=None, bits=None) -> dict:
 
     # ── 批次 2: 直接参数访问 ──
     direct_payload = "%1$p|%2$p|%3$p|%4$p|%5$p|%10$p|%20$p|%30$p|%40$p"
-    r2 = _run_payload(path, direct_payload, "直接参数访问", timeout=3)
+    r2 = _run_payload(path, direct_payload, "直接参数访问", timeout=probe_timeout)
     if r2["timed_out"]:
         evidence.append("[直接参数] 超时")
     else:
@@ -175,7 +181,7 @@ def detect_format_string(path: str, insns=None, bits=None) -> dict:
 
     # ── 批次 3: 危险模式 %s/%n（可能崩毁）──
     danger_payload = "%s%s%s|%n%n%n|%hhn%hhn"
-    r3 = _run_payload(path, danger_payload, "危险模式(%s/%n)", timeout=3)
+    r3 = _run_payload(path, danger_payload, "危险模式(%s/%n)", timeout=probe_timeout)
     if r3["timed_out"]:
         evidence.append("[危险模式] 超时")
         vulnerable = True

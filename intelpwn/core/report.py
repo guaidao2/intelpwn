@@ -106,6 +106,11 @@ def print_results(results: dict, binary: str):
     # 静态链接
     if prot.get("static", False):
         print(f"  │  {SEV['中危']} 静态链接            是 → ROP gadgets 丰富")
+    # CET (影子栈 / 间接分支保护) — x64/x86 通用
+    if prot.get("shstk", False):
+        print(f"  │  {SEV['高危']} CET 影子栈 (SHSTK)  开启 → 传统 ROP/SROP 被硬件阻断, 自动利用不可行")
+    if prot.get("ibt", False):
+        print(f"  │  {SEV['中危']} CET 间接分支 (IBT)  开启 → 间接 call/jmp 目标受限")
 
     # ═══════════════════════════════════════════════
     # 3. PLT 函数 (详细)

@@ -41,6 +41,8 @@ function renderOverview(report) {
       <span class="k">NX</span><span>${p.nx ? '开启' : '关闭'}</span>
       <span class="k">PIE</span><span>${p.pie ? '开启' : '关闭'}</span>
       <span class="k">RELRO</span><span>${esc(p.relro)}</span>
+      <span class="k">CET SHSTK</span><span class="${p.shstk ? 'sev-high' : ''}">${p.shstk ? '开启 (ROP被硬件阻断)' : '关闭'}</span>
+      <span class="k">CET IBT</span><span class="${p.ibt ? 'sev-mid' : ''}">${p.ibt ? '开启' : '关闭'}</span>
     </div>`);
 
   // 溢出发现

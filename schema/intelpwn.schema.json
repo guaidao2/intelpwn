@@ -15,7 +15,10 @@
         "canary": { "type": ["boolean", "null"] },
         "nx": { "type": ["boolean", "null"] },
         "pie": { "type": ["boolean", "null"] },
-        "relro": { "type": ["string", "null"], "enum": ["none", "partial", "full", null] }
+        "relro": { "type": ["string", "null"], "enum": ["none", "partial", "full", null] },
+        "shstk": { "type": ["boolean", "null"] },
+        "ibt": { "type": ["boolean", "null"] },
+        "cet": { "type": ["boolean", "null"] }
       }
     },
     "overflow": {
