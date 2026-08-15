@@ -80,11 +80,25 @@ class TestResolveScanf32:
         assert r == ""
 
     def test_mov_esp_imm_takes_comma_value(self):
-        """mov dword ptr [esp + 0x4], 0x8048470 → 应取 0x8048470 而非 0x4"""
+        """mov dword ptr [esp + 0x4], <rodata vaddr> → 应取逗号后的值 (映射出 Input)
+
+        旧解析取第一个 0x (槽位移 0x4, 不映射 → 空); 新解析取逗号后的 vaddr → "Input"。
+        此断言真正区分新旧解析。
+        """
+        from intelpwn.utils.binary import open_elf
         from intelpwn.core.analysis.overflow import _resolve_scanf_format
-        win = [_I(0, "mov", "dword ptr [esp + 0x4], 0x8048470"), _I(1, "call", "scanf")]
+        vaddr = None
+        with open_elf("challenges/challenge_x86_vuln") as elf:
+            sec = elf.get_section_by_name('.rodata')
+            if sec:
+                idx = sec.data().find(b'Input:')
+                if idx >= 0:
+                    vaddr = sec['sh_addr'] + idx
+        if vaddr is None:
+            return
+        win = [_I(0, "mov", f"dword ptr [esp + 0x4], 0x{vaddr:x}"), _I(1, "call", "scanf")]
         r = _resolve_scanf_format("challenges/challenge_x86_vuln", win, 32)
-        assert r == ""  # 0x8048470 超文件尾 → 空 (钉住修复: 逗号后锚定)  # 不崩; 地址超文件尾返回空是预期的
+        assert "Input" in r
 
 
 class TestMovEspPrefixed:
