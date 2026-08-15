@@ -311,7 +311,8 @@ def _resolve_scanf_format(path: str, window, bits) -> str:
                     pass
         elif bits == 32 and prev.mnemonic == 'mov' and re.search(r'\[e?s?p', prev.op_str):
             # x86 32 位: mov [esp], imm / mov dword ptr [esp], imm (格式串入栈)
-            m = re.search(r'0x([0-9a-fA-F]+)', prev.op_str)
+            # 取逗号后的立即数 (槽位移 0x4 不是格式串地址)
+            m = re.search(r',\s*0x([0-9a-fA-F]+)', prev.op_str)
             if m:
                 fmt_addr = int(m.group(1), 16)
                 break

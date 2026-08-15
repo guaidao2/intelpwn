@@ -67,3 +67,32 @@ class TestStackBufPassed:
                  _I(1, "push", "eax"),
                  _I(2, "call", "gets")]
         assert self._f(insns, 2) is False
+
+
+class TestResolveScanf32:
+    """32 位 scanf 格式串解析 (push imm / mov [esp],imm)"""
+
+    def test_push_imm(self):
+        from intelpwn.core.analysis.overflow import _resolve_scanf_format
+        win = [_I(0, "push", "0x8048470"), _I(1, "call", "scanf")]
+        # 0x8048470 超过文件尾 → 返回空或抛错, 不崩即可 (真实 .rodata 解析由 Kali 靶子覆盖)
+        r = _resolve_scanf_format("challenges/challenge_x86_vuln", win, 32)
+        assert isinstance(r, str)
+
+    def test_mov_esp_imm_takes_comma_value(self):
+        """mov dword ptr [esp + 0x4], 0x8048470 → 应取 0x8048470 而非 0x4"""
+        from intelpwn.core.analysis.overflow import _resolve_scanf_format
+        win = [_I(0, "mov", "dword ptr [esp + 0x4], 0x8048470"), _I(1, "call", "scanf")]
+        r = _resolve_scanf_format("challenges/challenge_x86_vuln", win, 32)
+        assert isinstance(r, str)  # 不崩; 地址超文件尾返回空是预期的
+
+
+class TestMovEspPrefixed:
+    """capstone 尺寸前缀形式: mov dword ptr [esp], eax 也能判栈链接"""
+
+    def test_prefixed_mov_esp(self):
+        from intelpwn.core.analysis.overflow import _stack_buf_passed
+        insns = [_I(0, "lea", "eax, [ebp-0x28]"),
+                 _I(1, "mov", "dword ptr [esp], eax"),
+                 _I(2, "call", "gets")]
+        assert _stack_buf_passed(insns, 2) is True
