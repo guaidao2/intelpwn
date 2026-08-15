@@ -82,3 +82,13 @@ class TestWebUI:
         # 不存在的函数 → 400/错误 JSON
         st, _ = _get(port, "/api/disasm/0x999999")
         assert st in (200, 400)
+
+
+def test_sym_map_for_plt_resolution():
+    """PLT stub 解析: read@plt 应在 sym_map 中 (symtab 无此条目, 经 pwntools ELF.plt 解析)"""
+    import pytest
+    pytest.importorskip("pwnlib", reason="pwntools 不可用 (Windows 环境)")
+    from intelpwn.core.webui import _sym_map_for
+    m = _sym_map_for("challenges/challenge_ret2win")
+    assert 0x401185 in m and m[0x401185] == "vulnerable"  # symtab 符号仍在
+    assert m.get(0x401050) == "read@plt"                  # PLT stub → read@plt
