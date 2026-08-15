@@ -197,6 +197,18 @@ function renderOverview(report) {
     addCard("符号执行 (angr)", body || "<span class='hint'>无</span>");
   }
 
+  // 兜底: 未硬编码渲染的 key → 通用折叠卡片 (插件分析器输出即所见, 不再改前端)
+  const KNOWN_KEYS = new Set(["protections", "overflow", "format_string", "got", "rop",
+    "bss_writable", "has_binsh", "heap_analysis", "angr_check", "win_targets",
+    "cross_validation", "summary", "path", "bits", "plt"]);
+  const extraKeys = Object.keys(report).filter(k => !KNOWN_KEYS.has(k));
+  for (const k of extraKeys) {
+    const body = `<details><summary>原始数据 (插件输出)</summary>` +
+                 `<pre style="white-space:pre-wrap;max-height:280px;overflow:auto">` +
+                 esc(JSON.stringify(report[k], null, 2)) + `</pre></details>`;
+    addCard(`其他发现: ${esc(k)}`, body);
+  }
+
   document.getElementById("binary-name").textContent =
     report.path ? "目标: " + report.path : "";
 }
