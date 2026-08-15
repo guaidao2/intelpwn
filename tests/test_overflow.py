@@ -74,10 +74,10 @@ class TestResolveScanf32:
 
     def test_push_imm(self):
         from intelpwn.core.analysis.overflow import _resolve_scanf_format
-        win = [_I(0, "push", "0x8048470"), _I(1, "call", "scanf")]
-        # 0x8048470 超过文件尾 → 返回空或抛错, 不崩即可 (真实 .rodata 解析由 Kali 靶子覆盖)
+        win = [_I(0, "push", "0xdead0000"), _I(1, "call", "scanf")]
+        # 0xdead0000 不落在任何 PT_LOAD → 返回空 (toolchain 无关)
         r = _resolve_scanf_format("challenges/challenge_x86_vuln", win, 32)
-        assert r == ""  # 0x8048470 超文件尾 → 空 (钉住修复: 逗号后锚定)
+        assert r == ""
 
     def test_mov_esp_imm_takes_comma_value(self):
         """mov dword ptr [esp + 0x4], 0x8048470 → 应取 0x8048470 而非 0x4"""
@@ -96,3 +96,24 @@ class TestMovEspPrefixed:
                  _I(1, "mov", "dword ptr [esp], eax"),
                  _I(2, "call", "gets")]
         assert _stack_buf_passed(insns, 2) is True
+
+
+class TestScanfVaddrToOffset:
+    """vaddr → 文件偏移映射: 真实 .rodata vaddr 应解析出字符串 (钉住修复)"""
+
+    def test_rodata_vaddr_resolves(self):
+        from intelpwn.utils.binary import open_elf
+        from intelpwn.core.analysis.overflow import _resolve_scanf_format
+        vaddr = None
+        with open_elf("challenges/challenge_x86_vuln") as elf:
+            sec = elf.get_section_by_name('.rodata')
+            if sec:
+                data = sec.data()
+                idx = data.find(b'Input:')
+                if idx >= 0:
+                    vaddr = sec['sh_addr'] + idx
+        if vaddr is None:
+            return  # 无 .rodata/字符串则跳过
+        win = [_I(0, "mov", f"dword ptr [esp], 0x{vaddr:x}"), _I(1, "call", "scanf")]
+        r = _resolve_scanf_format("challenges/challenge_x86_vuln", win, 32)
+        assert "Input" in r, f"应解析出 .rodata 字符串, 实际 {r!r}"
