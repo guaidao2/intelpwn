@@ -1,7 +1,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/IntelPwn-v1.1-blue?style=flat-square" alt="version">
-  <img src="https://img.shields.io/badge/license-GPLv3-green?style=flat-square" alt="license">
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="license">
   <img src="https://img.shields.io/badge/python-3.10+-orange?style=flat-square" alt="python">
   <img src="https://img.shields.io/badge/CTF-Pwn-red?style=flat-square" alt="ctf">
 </p>
@@ -339,4 +339,4 @@ python3 intelpwn.py analyze --dir challenges
 
 ## License
 
-GPLv3 — 玄幕安全团队-guaidao2
+MIT — 玄幕安全团队-guaidao2 (见 [LICENSE](LICENSE))
