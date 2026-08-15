@@ -32,7 +32,8 @@
 | **格式化字符串** | 静态 + 黑盒, 合并 4 批加速 | 偏移自动定位 |
 | **安全保护** | Canary / NX / PIE / RELRO / RWX 段 / 静态链接 | 带风险评级 |
 | **PLT 危险函数** | 自动标注 system/execve/gets/printf 等 | 用途分类 |
-| **ROP gadgets** | capstone 定向扫描 (pop_rdi/rsi/rdx, ret, int 0x80, **jmp_rsp, syscall;ret**) + pwntools 回退 | ~0.1s |
+| **ROP gadgets** | capstone 定向扫描 (x64: pop_rdi/rsi/rdx, ret, jmp_rsp, syscall;ret · x86: pop_eax/ebx/ecx/edx, int 0x80) + pwntools 回退 | ~0.1s |
+| **x86 32 位支持** | cdecl 栈传参检测 (lea [ebp-X] → push/mov[esp]), scanf %s 格式串 vaddr→offset 映射, 三重 padding 验证自适应 (eip/esp/ebp + p32) | 全链路覆盖 |
 | **BSS 可写区** | ELF 符号表扫描大尺寸 BSS 符号 | 用于 shellcode 存储 |
 | **CFG 复杂度** | 指令流直接计数边和节点 (去 NetworkX) | 5ms vs 500ms |
 | **堆漏洞线索** | 同函数多 free (double-free) / malloc 大小算术运算 (整数溢出) / 循环内 free (UAF 场景) | 启发式提示 |
@@ -44,13 +45,14 @@
 
 | 场景 | 模板 | 状态 |
 |---|---|---|
-| **ret2win** (有 win 函数) | `gen_ret2win` | 直接可用 |
+| **ret2win** (有 win 函数) | `gen_ret2win` | x64/x86 通用 (p64/p32) |
+| **int 0x80 execve 链** (x86 32 位) | `gen_int80_execve` | pop_eax/ebx/ecx/edx + int 0x80, eax=0x0b |
 | **ret2system** (`system@plt` + `/bin/sh`) | `gen_ret2system` | 64 位需 pop_rdi; **32 位栈传参免 gadget** |
 | **ret2libc** (leak + ret2system) | `gen_ret2libc` | 64 位有 pop_rdi 时自动; **32 位栈传参布局** |
 | **ret2dlresolve** (无 libc) | `gen_ret2dlresolve` | read@plt + 可写 BSS + 非 Full RELRO; **注意 glibc>=2.40 已失效, 模板自动检测并 WARN** |
 | **SROP** (sigreturn) | `gen_srop` | 有 syscall;ret + pop 三件套 + read@plt — **Kali 实测打穿** |
 | **shellcode 注入** (NX 关闭) | `gen_shellcode` | 无 jmp_rsp gadget 时不生成断路径 |
-| **Canary 爆破 + ret2win** | `gen_canary_ret2win` | 支持 `--remote` fork 服务器 |
+| **Canary 爆破 + ret2win** | `gen_canary_ret2win` | 4/8 字节自适应; 支持 `--remote` fork 服务器 |
 | **格式化字符串** (GOT 覆写) | `gen_fmtstr` | 有 puts@got+system@plt 时生成实际 payload |
 | **tcache dup** (堆) | `gen_tcache_dup` | 原语骨架; glibc<2.34 目标 __free_hook, >=2.34 自动标注 tls_dtor_list 现代路径 |
 | **one_gadget 自动定位** | ret2libc 内嵌 | 有 one_gadget 工具时自动填充偏移 |
@@ -143,7 +145,7 @@ API: `GET /api/functions` `/api/disasm/<addr>` `/api/cfg/<addr>` `/api/report` (
 ### 运行测试
 
 ```bash
-# 单元测试 (48 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
+# 单元测试 (108 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
 python3 -m pytest tests/ -v
 ```
 
@@ -197,7 +199,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
 ├── challenges/                      13 道 CTF 练习题 (含 1 道 x86 32 位)
-├── tests/                           48 个单元测试
+├── tests/                           108 个单元测试
 ├── schema/intelpwn.schema.json      JSON 输出 schema
 └── install.sh                       依赖安装 (apt + 隔离 venv)
 ```
@@ -265,7 +267,7 @@ def my_check(path, results):
 | 符号执行验证 | 支持 (angr 插件) | 不支持 | 不支持 | 不支持 |
 | 批量扫描 + JSON | 支持 (--dir + schema) | 不支持 | 不支持 | 不支持 |
 | 中文报告 | 支持 | 不支持 | 不支持 | 不支持 |
-| 单元测试 | 28 用例 | - | - | - |
+| 单元测试 | 108 用例 | - | - | - |
 
 ---
 
@@ -277,7 +279,7 @@ def my_check(path, results):
 - **pyelftools** >= 0.29 (ELF 结构解析)
 - **angr** >= 9.2 (可选, 符号执行插件, 经 install.sh 装入 venv)
 - **one_gadget** (可选, ret2libc 模板自动填充)
-- **系统工具**: binutils, gdb, checksec, ROPgadget, file
+- **系统工具**: binutils, gdb, checksec, ROPgadget, file, gcc-multilib (编 x86 32 位靶子)
 
 ---
 
