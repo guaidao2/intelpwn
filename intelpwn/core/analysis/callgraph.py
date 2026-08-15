@@ -100,8 +100,9 @@ def build_call_graph(path, results=None, func_bounds=None, sym_map=None, insns=N
         nodes[start] = {"id": start, "name": name, "addr": start, "kind": "func",
                         "vuln": False, "danger": False, "entry": False, "on_path": False}
     for addr, name in sym_map.items():
-        if addr not in nodes and name.endswith("@plt"):
-            nodes[addr] = {"id": addr, "name": name, "addr": addr, "kind": "plt",
+        if addr not in nodes:
+            nodes[addr] = {"id": addr, "name": name, "addr": addr,
+                           "kind": "plt" if name.endswith("@plt") else "func",
                            "vuln": False, "danger": False, "entry": False, "on_path": False}
 
     # ── 2. 调用边 ──
@@ -136,10 +137,10 @@ def build_call_graph(path, results=None, func_bounds=None, sym_map=None, insns=N
                 vuln_addrs.add(caller)
 
     for nid, node in nodes.items():
-        if node["kind"] == "plt":
-            base = node["name"][:-4] if node["name"].endswith("@plt") else node["name"]
-            if base in DANGER_PLT:
-                node["danger"] = True
+        # danger 按 @plt 名字后缀判定 (不管节点 kind — symtab 里 read@plt 可能是 STT_FUNC)
+        base = node["name"][:-4] if node["name"].endswith("@plt") else node["name"]
+        if base in DANGER_PLT:
+            node["danger"] = True
         if nid in vuln_addrs:
             node["vuln"] = True
 

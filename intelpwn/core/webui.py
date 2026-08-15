@@ -243,11 +243,14 @@ class _Handler(BaseHTTPRequestHandler):
         return {"function": func_addr, "lines": lines}
 
     def _api_callgraph(self):
-        """全二进制函数调用图 (全局关系分析) — 复用缓存的函数边界/符号表"""
+        """全二进制函数调用图 (全局关系分析) — 复用缓存的函数边界/符号表/反汇编"""
         from intelpwn.core.analysis.callgraph import build_call_graph
+        pre = _get_disas(self.binary)
+        insns = pre[0] if pre else None
         return build_call_graph(self.binary, results=self.results,
                                 func_bounds=_func_bounds(self.binary),
-                                sym_map=_sym_map_for(self.binary))
+                                sym_map=_sym_map_for(self.binary),
+                                insns=insns)
 
     def _api_cfg(self, func_addr):
         """函数基本块 CFG, 标记漏洞调用点所在块"""
