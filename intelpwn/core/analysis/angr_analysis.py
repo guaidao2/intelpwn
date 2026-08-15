@@ -280,7 +280,8 @@ def _angr_discover(path: str, results: dict, max_sites: int = 20) -> dict:
                 continue
             dangerous = on_stack and (symbolic or maxv > 0x100)
             entry.update({"vuln": "bounded_read", "size_symbolic": symbolic,
-                          "size_max": maxv, "stack_buf": on_stack})
+                          "size_max": maxv, "stack_buf": on_stack,
+                          "dangerous": dangerous})
             if dangerous:
                 if on_stack:
                     pad = _compute_padding(st, buf)
