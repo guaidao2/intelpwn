@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -26,6 +27,14 @@ from .analysis.cfg import build_function_cfg
 
 WEBUI_STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "..", "webui", "static")
+
+# 每二进制缓存: 反汇编 + 函数边界 (防 LAN 并发请求反复重算拖垮 CPU)
+_disas_cache = {}
+_bounds_cache = {}
+_disas_lock = threading.Lock()
+_bounds_lock = threading.Lock()
+# 并发上限: 避免无界线程耗尽资源
+_heavy_sem = threading.Semaphore(4)
 
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -39,18 +48,36 @@ _CONTENT_TYPES = {
 
 
 def _func_bounds(path):
-    """符号表函数边界 [(start, end, name)]"""
-    funcs = []
-    try:
-        with open_elf(path) as elf:
-            symtab = elf.get_section_by_name(".symtab")
-            if symtab:
-                for sym in symtab.iter_symbols():
-                    if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
-                        funcs.append((sym['st_value'], sym['st_value'] + sym['st_size'], sym.name))
-    except Exception:
-        pass
-    return funcs
+    """符号表函数边界 [(start, end, name)] — 缓存"""
+    if path in _bounds_cache:
+        return _bounds_cache[path]
+    with _bounds_lock:
+        if path in _bounds_cache:
+            return _bounds_cache[path]
+        funcs = []
+        try:
+            with open_elf(path) as elf:
+                symtab = elf.get_section_by_name(".symtab")
+                if symtab:
+                    for sym in symtab.iter_symbols():
+                        if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
+                            funcs.append((sym['st_value'], sym['st_value'] + sym['st_size'], sym.name))
+        except Exception:
+            pass
+        _bounds_cache[path] = funcs
+        return funcs
+
+
+def _get_disas(path):
+    """共享反汇编 (缓存, 防并发重复计算)"""
+    if path in _disas_cache:
+        return _disas_cache[path]
+    with _disas_lock:
+        if path in _disas_cache:
+            return _disas_cache[path]
+        pre = disassemble_text(path)
+        _disas_cache[path] = pre
+        return pre
 
 
 def _parse_call_addr(dangerous_call):
@@ -106,11 +133,14 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/report":
                 self._json(self.results)
             elif path == "/api/functions":
-                self._json(self._api_functions())
+                with _heavy_sem:
+                    self._json(self._api_functions())
             elif path.startswith("/api/disasm/"):
-                self._json(self._api_disasm(_resolve_func_addr(path[len("/api/disasm/"):], self.binary)))
+                with _heavy_sem:
+                    self._json(self._api_disasm(_resolve_func_addr(path[len("/api/disasm/"):], self.binary)))
             elif path.startswith("/api/cfg/"):
-                self._json(self._api_cfg(_resolve_func_addr(path[len("/api/cfg/"):], self.binary)))
+                with _heavy_sem:
+                    self._json(self._api_cfg(_resolve_func_addr(path[len("/api/cfg/"):], self.binary)))
             else:
                 self.send_error(404)
         except (ValueError, IndexError):
@@ -151,7 +181,7 @@ class _Handler(BaseHTTPRequestHandler):
                     call_addr = _vuln_call_site(v)
             except ValueError:
                 pass
-        pre = disassemble_text(self.binary)
+        pre = _get_disas(self.binary)
         if not pre:
             return {"error": "反汇编失败"}
         insns, bits = pre[0], pre[1]
@@ -183,7 +213,11 @@ class _Handler(BaseHTTPRequestHandler):
                         mark_addrs.append(ca)
             except ValueError:
                 pass
-        return build_function_cfg(self.binary, func_addr, end, mark_addrs=mark_addrs)
+        pre = _get_disas(self.binary)
+        insns = pre[0] if pre else None
+        bits = pre[1] if pre else None
+        return build_function_cfg(self.binary, func_addr, end,
+                                  insns=insns, bits=bits, mark_addrs=mark_addrs)
 
     # ── 基础响应 ─────────────────────────────────────────────
 
@@ -231,7 +265,11 @@ def _pick_port(preferred: int, max_tries: int = 20):
 def serve(results: dict, binary: str, host: str = "0.0.0.0",
           port: int = 5000, explicit_port: bool = False,
           open_browser: bool = True) -> None:
-    """启动可视化服务并阻塞 (Ctrl-C 退出)"""
+    """启动可视化服务并阻塞 (Ctrl-C 退出)
+
+    host 默认 0.0.0.0 (Kali VM 场景宿主机可访问); 在敌对网络上可
+    用 --web-host 127.0.0.1 锁定本机。
+    """
     _Handler.results = results
     _Handler.binary = binary
 

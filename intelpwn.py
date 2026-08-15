@@ -184,7 +184,7 @@ def cmd_analyze(args):
             print_warning("--web 仅支持单文件分析, 批量模式跳过可视化服务")
         else:
             from intelpwn.core.webui import serve
-            serve(results, path,
+            serve(results, path, host=args.web_host,
                   port=args.web_port if args.web_port is not None else 5000,
                   explicit_port=args.web_port is not None)
 
@@ -209,9 +209,11 @@ def main():
     p.add_argument("--verify", action="store_true", help="执行动态验证 + 交叉验证 (默认关)")
     p.add_argument("--no-verify", action="store_true", help="显式关闭动态验证")
     p.add_argument("--web", action="store_true",
-                   help="分析后启动本地可视化服务 (0.0.0.0, 默认端口 5000)")
+                   help="分析后启动本地可视化服务 (默认 0.0.0.0, 端口 5000)")
     p.add_argument("--web-port", type=int, default=None,
                    help="可视化服务端口 (默认 5000, 被占自动递增; 显式指定则严格使用)")
+    p.add_argument("--web-host", default="0.0.0.0",
+                   help="可视化服务监听地址 (默认 0.0.0.0; 敌对网络可锁 127.0.0.1)")
     p.add_argument("--json", action="store_true", help="以 JSON 格式输出结果")
     p.add_argument("--no-exploit", action="store_true", help="不自动生成 exploit 脚本")
 
