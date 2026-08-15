@@ -155,14 +155,15 @@ async function renderCFG(f) {
     const marked = new Set(cfg.marked);
     const elements = [];
     for (const n of cfg.nodes) {
-      const lines = n.insns.slice(0, 12)
-        .map(i => `${i.mnemonic} ${i.op_str}`.trim())
-        .map(esc).join("<br>");
+      const insns = n.insns.slice(0, 12);
       elements.push({
         data: {
           id: String(n.id),
           label: `0x${n.start.toString(16)}`,
-          html: lines || "…",
+          insns,  // 供右侧详情面板渲染 (完整)
+          html: insns.slice(0, 6)   // 节点标签只显示前 6 行, 防止节点过高互相重叠
+            .map(i => `${i.mnemonic} ${i.op_str}`.trim())
+            .map(esc).join("<br>"),
           vuln: marked.has(n.id),
         },
       });
@@ -184,6 +185,8 @@ async function renderCFG(f) {
             "label": "data(label)",
             "width": 130, "height": "label",
             "shape": "round-rectangle",
+            "text-wrap": "wrap", "text-max-width": 130,
+            "padding": "6px",
           } },
         // 漏洞块: 红色底 + 红边 (定点标记)
         { selector: "node[vuln]", style: {
@@ -196,21 +199,30 @@ async function renderCFG(f) {
             "line-color": "#30363d", "target-arrow-color": "#30363d",
           } },
       ],
-      layout: { name: "dagre", spacingFactor: 1.1 },
+      layout: { name: "dagre", spacingFactor: 1.5 },
     });
+    // 点节点 → 右侧独立面板显示块内反汇编 (不浮在图上)
     cy.on("tap", "node", evt => {
       const node = evt.target;
-      if (node.data("html")) {
-        // 弹块内反汇编
-        const info = document.createElement("div");
-        info.style.cssText = "position:fixed;right:20px;bottom:20px;max-width:460px;" +
-          "background:#0d1117;border:1px solid #f85149;border-radius:6px;padding:10px;" +
-          "font-size:12px;z-index:99;white-space:pre-wrap;";
-        info.innerHTML = `<b>块 @ ${node.data("label")}</b><hr>` + node.data("html");
-        info.onclick = () => info.remove();
-        div.appendChild(info);
+      const det = document.getElementById("cfg-detail");
+      det.innerHTML = "";
+      const h = document.createElement("div");
+      h.className = "cfg-detail-title";
+      h.innerHTML = `块 @ <b>${node.data("label")}</b>` +
+        (node.data("vuln") ? ' <span style="color:#f85149;font-weight:bold">[漏洞块]</span>' : "");
+      det.appendChild(h);
+      for (const i of node.data("insns") || []) {
+        const d = document.createElement("div");
+        d.className = "dline";
+        d.innerHTML = `<span class="a">0x${i.addr.toString(16)}</span>` +
+                      `<span class="m">${esc(i.mnemonic)}</span>` +
+                      `<span class="o">${esc(i.op_str)}</span>`;
+        det.appendChild(d);
       }
     });
+    // 初始自动选中漏洞块
+    const vulnNode = cy.$("node[vuln]").first();
+    if (vulnNode.length) { vulnNode.emit("tap"); cy.center(vulnNode); }
   } catch (e) {
     div.innerHTML = "<p class='hint'>CFG 加载失败: " + esc(e.message) + "</p>";
   }

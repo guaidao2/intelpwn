@@ -55,8 +55,17 @@ pre { white-space: pre-wrap; word-break: break-all; }
 .dline.call { color: var(--accent); }
 
 /* CFG */
-#cy { width: 100%; height: calc(100vh - 200px); background: var(--panel);
+#cfg-wrap { display: flex; gap: 12px; align-items: stretch; }
+#cy { flex: 1; height: calc(100vh - 240px); background: var(--panel);
       border: 1px solid var(--border); border-radius: 6px; }
+#cfg-detail { width: 330px; flex-shrink: 0; max-height: calc(100vh - 240px);
+      overflow-y: auto; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px; font-size: 12px; }
+#cfg-detail .cfg-detail-title { margin-bottom: 8px; color: var(--dim); font-size: 13px; }
+#cfg-detail .dline { display: flex; gap: 8px; padding: 1px 0; }
+#cfg-detail .dline .a { color: var(--dim); min-width: 70px; }
+#cfg-detail .dline .m { color: var(--accent); min-width: 60px; }
+#cfg-detail .dline .o { color: #c9d1d9; }
 .legend { margin-bottom: 8px; color: var(--dim); font-size: 12px; display: flex; gap: 14px; align-items: center; }
 .lg { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
 .lg-vuln { background: #f85149; border: 1px solid #ff7b72; }
