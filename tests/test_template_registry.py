@@ -114,3 +114,23 @@ def test_generate_uses_registry(tmp_path, monkeypatch):
     content = open(out, encoding="utf-8", errors="replace").read()
     # 命中 ret2win 模板: 有 "win = 0x..." 赋值且不是骨架
     assert "win = 0x" in content and "骨架脚本" not in content
+
+
+def test_static_ret2system_routing():
+    """静态链接 + 无 win + system/binsh 符号 → 静态 ret2system 模板 (priority 45)"""
+    _reset()
+    r = _results(win=False, system=True)
+    r["protections"]["static"] = True
+    r["static_libc"] = {"system_addr": "0x404c50", "binsh_addr": "0x47b010",
+                        "execve_addr": "0x44dc20", "symbols": {"system": "0x404c50"}}
+    assert _first_matching(r) == "ret2system (静态链接)"
+
+
+def test_static_with_win_prefers_ret2win():
+    """静态链接 + win 符号 → ret2win 优先 (20 < 45)"""
+    _reset()
+    r = _results(win=True)
+    r["protections"]["static"] = True
+    r["static_libc"] = {"system_addr": "0x404c50", "binsh_addr": "0x47b010",
+                        "symbols": {"system": "0x404c50"}}
+    assert _first_matching(r) == "ret2win"

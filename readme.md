@@ -34,6 +34,9 @@
 | **PLT 危险函数** | 自动标注 system/execve/gets/printf 等 | 用途分类 |
 | **ROP gadgets** | capstone 定向扫描 (x64: pop_rdi/rsi/rdx, ret, jmp_rsp, syscall;ret · x86: pop_eax/ebx/ecx/edx, int 0x80) + pwntools 回退 | ~0.1s |
 | **x86 32 位支持** | cdecl 栈传参检测 (lea [ebp-X] → push/mov[esp]), scanf %s 格式串 vaddr→offset 映射, 三重 padding 验证自适应 (eip/esp/ebp + p32) | 全链路覆盖 |
+| **静态链接专项** | libc 内置符号识别 (system/execve/binsh 固定地址), 危险函数符号表 fallback (静态链接无 PLT 也能识别 gets/read), fmtstr 无 GOT 覆写返回地址路径 | 能力包 |
+| **复杂 ROP 组装** | ret2csu (__libc_csu_init) 识别 + x86 pop;pop;ret 多参链 | 链可行性分析 |
+| **堆助手** | glibc 版本识别 + tcache/safe-linking/__free_hook 行为表 (按版本给攻击面) | 独立模块 |
 | **BSS 可写区** | ELF 符号表扫描大尺寸 BSS 符号 | 用于 shellcode 存储 |
 | **CFG 复杂度** | 指令流直接计数边和节点 (去 NetworkX) | 5ms vs 500ms |
 | **堆漏洞线索** | 同函数多 free (double-free) / malloc 大小算术运算 (整数溢出) / 循环内 free (UAF 场景) | 启发式提示 |
@@ -47,7 +50,7 @@
 |---|---|---|
 | **ret2win** (有 win 函数) | `gen_ret2win` | x64/x86 通用 (p64/p32) |
 | **int 0x80 execve 链** (x86 32 位) | `gen_int80_execve` | pop_eax/ebx/ecx/edx + int 0x80, eax=0x0b |
-| **ret2system** (`system@plt` + `/bin/sh`) | `gen_ret2system` | 64 位需 pop_rdi; **32 位栈传参免 gadget** |
+| **ret2system** (`system@plt` + `/bin/sh`) | `gen_ret2system` | 64 位需 pop_rdi; **32 位栈传参免 gadget**; **静态链接固定地址 (static_libc)** |
 | **ret2libc** (leak + ret2system) | `gen_ret2libc` | 64 位有 pop_rdi 时自动; **32 位栈传参布局** |
 | **ret2dlresolve** (无 libc) | `gen_ret2dlresolve` | read@plt + 可写 BSS + 非 Full RELRO; **注意 glibc>=2.40 已失效, 模板自动检测并 WARN** |
 | **SROP** (sigreturn) | `gen_srop` | 有 syscall;ret + pop 三件套 + read@plt — **Kali 实测打穿** |
@@ -168,6 +171,7 @@ python3 -m pytest tests/ -v
 | `challenge_tcache` | NX, NoCanary, NoPIE | UAF + tcache poisoning | 手动 exploit (现代 glibc 实测打穿) |
 | `challenge_angr_hidden` | NX, NoCanary, NoPIE | 子函数 strcpy 栈溢出 | angr 主动发现 (静态漏检) |
 | `challenge_x86_vuln` | x86 32 位, NX, NoCanary, NoPIE | gets 栈溢出 52 padding | ret2win (实测打穿) / ret2system (32 位栈传参) |
+| `challenge_static_vuln` | 静态链接, NX, NoCanary, NoPIE | gets 栈溢出 72 padding | static_libc 符号识别 + 静态 ret2system |
 | `challenge_rop` | NX, NoCanary | 栈溢出 24 padding | 骨架 + gadget 列表 |
 | `challenge_pie` | NX, PIE, NoCanary | 栈溢出 + PIE | 解析运行时地址 |
 
@@ -186,7 +190,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 │   ├── rop.py                       capstone 定向 ROP + 链分析
 │   ├── bss.py                       BSS 符号扫描
 │   ├── cfg.py                       CFG 圈复杂度 (无 NetworkX)
-│   ├── heap.py                      堆函数检测 + 静态线索
+│   ├── heap.py                      堆函数检测 + 静态线索 + glibc 版本行为表
 │   ├── comments.py                  汇编三级自动注释引擎 (漏洞链/风险/语义)
 │   ├── findings.py                  漏洞总结 + 策略生成
 │   └── angr_analysis.py             angr 插件 (主动发现/可达性/padding, 自注册)
@@ -198,7 +202,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 ├── intelpwn/webui/static/           前端单页 (app.js/index.html/style.css + cytoscape/dagre)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
-├── challenges/                      13 道 CTF 练习题 (含 1 道 x86 32 位)
+├── challenges/                      14 道 CTF 练习题 (含 32 位 + 静态链接)
 ├── tests/                           108 个单元测试
 ├── schema/intelpwn.schema.json      JSON 输出 schema
 └── install.sh                       依赖安装 (apt + 隔离 venv)

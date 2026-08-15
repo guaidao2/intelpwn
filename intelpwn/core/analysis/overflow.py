@@ -153,12 +153,26 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
     if not func_bounds and insns:
         func_bounds = [(insns[0].address, insns[-1].address + 1, "sub_%x" % insns[0].address)]
 
-    # 建立 PLT 地址→名称映射
+    # 建立 PLT 地址→名称映射 (静态链接无 PLT: fallback 到符号表, 直接调 libc 内部地址)
+    plt_map = {}
     try:
         pwn_elf = ELF(path, checksec=False)
         plt_map = {v: k for k, v in pwn_elf.plt.items()}
     except Exception:
-        plt_map = {}
+        pass
+    if not plt_map:
+        # 静态链接/无 PLT: 用符号表 (STT_FUNC) 建 addr→name, 覆盖 gets/read/strcpy 等
+        try:
+            with open_elf(path) as elf:
+                for sec_name in ('.symtab', '.dynsym'):
+                    sec = elf.get_section_by_name(sec_name)
+                    if not sec:
+                        continue
+                    for sym in sec.iter_symbols():
+                        if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
+                            plt_map.setdefault(sym['st_value'], sym.name)
+        except Exception:
+            pass
 
     # 危险输入函数分两类:
     #  - BOUNDED_INPUTS: 有显式大小参数, 需比较 大小 vs 栈帧

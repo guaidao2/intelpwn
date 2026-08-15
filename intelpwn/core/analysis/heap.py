@@ -204,6 +204,14 @@ def detect_heap(path: str) -> dict:
     insns = pre[0] if pre else None
     clues = _detect_clues(path, insns)
 
+    # glibc 版本 + tcache 行为 (堆助手)
+    glibc = {}
+    try:
+        from .glibc_meta import detect_glibc_meta
+        glibc = detect_glibc_meta()
+    except Exception:
+        pass
+
     return {
         "has_heap": True,
         "functions": heap_funcs,
@@ -211,4 +219,5 @@ def detect_heap(path: str) -> dict:
         "heap_function_list": heap_funcs,
         "complexity": cfg.get("cyclomatic", 0),
         "clues": clues,
+        "glibc": glibc,
     }

@@ -64,6 +64,7 @@ def run_extra_analyzers(path: str, results: dict) -> dict:
 # 导入失败 (依赖缺失) 时自动跳过, 不影响内置分析
 try:
     from . import angr_analysis  # noqa: F401 — 自注册 angr_check 插件
+    from . import static_libc   # noqa: F401 — 自注册 static_libc 插件 (静态链接专项)
 except Exception:
     pass
 

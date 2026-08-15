@@ -29,7 +29,8 @@ all: \
 	challenge_ret2dlresolve \
 	challenge_tcache \
 	challenge_ret2text \
-	challenge_x86_vuln
+	challenge_x86_vuln \
+	challenge_static_vuln
 
 # ── 1. 最简单的 ret2win ──
 challenge_ret2win: challenge_ret2win.c
@@ -87,6 +88,10 @@ challenge_ret2text: challenge_ret2text.c
 challenge_x86_vuln: challenge_x86_vuln.c
 	$(CC) -Wall -m32 -no-pie -fno-stack-protector -z noexecstack -o $@ $<
 
+# 静态链接靶子 (静态链接专项; 需 libc6-dev)
+challenge_static_vuln: challenge_static_vuln.c
+	$(CC) -Wall -static -no-pie -fno-stack-protector -z noexecstack -o $@ $<
+
 # ── 测试 ──
 test: all
 	@echo "===== 测试 IntelPwn 分析 ====="
@@ -103,5 +108,5 @@ clean:
 	      challenge_pie challenge_fmtstr_canary \
 	      challenge_angr_hidden challenge_srop \
 	      challenge_ret2dlresolve challenge_tcache \
-	      challenge_ret2text challenge_x86_vuln
+	      challenge_ret2text challenge_x86_vuln challenge_static_vuln
 	rm -rf ../reports

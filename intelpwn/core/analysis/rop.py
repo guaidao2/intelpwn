@@ -46,6 +46,8 @@ def find_gadgets_capstone(insns, bits) -> dict:
         "int_0x80": "未找到",
         "jmp_rsp": "未找到",
         "syscall": "未找到",
+        "ret2csu": "未找到",      # __libc_csu_init: pop rbx rbp r12-r15; ret
+        "pop_pop_ret": "未找到",  # x86: pop X; pop Y; ret (32 位多参链)
     }
 
     for i, insn in enumerate(insns):
@@ -114,6 +116,24 @@ def find_gadgets_capstone(insns, bits) -> dict:
             if i + 1 < len(insns) and insns[i + 1].mnemonic == 'ret':
                 if result["syscall"] == "未找到":
                     result["syscall"] = hex(insn.address)
+
+        # ret2csu (x64): pop rbx; pop rbp; pop r12; pop r13; pop r14; pop r15; ret
+        if bits == 64 and mnemo == 'pop' and op_str == 'rbx' and result["ret2csu"] == "未找到":
+            seq = ['rbx', 'rbp', 'r12', 'r13', 'r14', 'r15']
+            ok = True
+            for k, reg in enumerate(seq):
+                j = i + k
+                if j >= len(insns) or insns[j].mnemonic != 'pop' or insns[j].op_str != reg:
+                    ok = False
+                    break
+            if ok and i + 6 < len(insns) and insns[i + 6].mnemonic == 'ret':
+                result["ret2csu"] = hex(insn.address)
+
+        # pop X; pop Y; ret (x86 32 位多参链)
+        if bits == 32 and mnemo == 'pop' and result["pop_pop_ret"] == "未找到":
+            if (i + 2 < len(insns) and insns[i + 1].mnemonic == 'pop'
+                    and insns[i + 2].mnemonic == 'ret'):
+                result["pop_pop_ret"] = hex(insn.address)
 
     return result
 
@@ -199,6 +219,20 @@ def analyze_rop(path: str, plt: dict = None, insns=None, bits=None) -> dict:
         chains.append({
             "type": "execve syscall",
             "condition": "pop_eax=59 + pop_ebx=binsh + int_0x80",
+            "feasible": True,
+        })
+
+    if result.get('ret2csu', "未找到") != "未找到":
+        chains.append({
+            "type": "ret2csu",
+            "condition": f"__libc_csu_init @ {result['ret2csu']}: 三参任意函数调用 (r13d/r14/r15 → rdi/rsi/rdx)",
+            "feasible": True,
+        })
+
+    if result.get('pop_pop_ret', "未找到") != "未找到" and bits == 32:
+        chains.append({
+            "type": "pop;pop;ret (x86 多参)",
+            "condition": f"{result['pop_pop_ret']}: 32 位栈传参多参数清理",
             "feasible": True,
         })
 

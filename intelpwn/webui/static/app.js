@@ -115,7 +115,8 @@ function renderOverview(report) {
   // ROP Gadgets
   const rop = report.rop || {};
   const known = { pop_rdi: "ret2libc 必备", pop_rsi: "第二参数", pop_rdx: "第三参数",
-                  ret: "栈对齐 (绕过 movaps)", pop_eax: "syscall 编号", int_0x80: "系统调用" };
+                  ret: "栈对齐 (绕过 movaps)", pop_eax: "syscall 编号", int_0x80: "系统调用",
+                  ret2csu: "__libc_csu_init 三参调用", pop_pop_ret: "x86 多参清理" };
   const ropList = Object.entries(known)
     .map(([g, hint]) => [g, rop[g]])
     .filter(([, a]) => a && a !== "未找到" && typeof a !== "object");
@@ -147,12 +148,31 @@ function renderOverview(report) {
       (hasBinsh ? `<span class="sev-low">存在于二进制 → 可直接 ret2system</span>` : `<span>不在二进制 → 需从 libc 找</span>`) + `</div>`);
   }
 
+  // 静态链接 libc 符号 (主力卡片: 固定地址可直接利用)
+  const sl = report.static_libc;
+  if (sl && Object.keys(sl).length) {
+    const syms = sl.symbols || {};
+    addCard("静态链接 libc 符号", `
+      <div class="kv"><span class="k">system</span><span class="sev-low">${esc(sl.system_addr)}</span></div>
+      <div class="kv"><span class="k">execve</span><span>${esc(sl.execve_addr)}</span></div>
+      <div class="kv"><span class="k">/bin/sh</span><span class="sev-low">${esc(sl.binsh_addr)}</span></div>
+      <div class="kv"><span class="k">说明</span><span>静态链接: 固定地址, 无需 libc leak</span></div>
+      ${Object.keys(syms).length ? `<div class="kv"><span class="k">符号</span><span>${esc(Object.keys(syms).join(", "))}</span></div>` : ""}
+    `);
+  }
+
   // 堆分析
   const heap = report.heap_analysis || {};
   if (heap && heap.has_heap) {
+    const gv = heap.glibc || {};
     addCard("堆分析", `
       <div class="kv"><span class="k">堆函数</span><span>${esc((heap.functions || []).join(", "))}</span></div>
       <div class="kv"><span class="k">复杂度</span><span>${esc(heap.complexity)} (函数数 ${esc(heap.function_count)})${heap.complexity > 30 ? " <span class='sev-mid'>→ 可能含堆漏洞</span>" : ""}</span></div>
+      ${gv.version ? `<div class="kv"><span class="k">glibc</span><span class="sev-mid">${esc(gv.version)}</span></div>
+      <div class="kv"><span class="k">tcache</span><span>${esc(gv.tcache || "?")}</span></div>
+      <div class="kv"><span class="k">safe-linking</span><span>${gv.safe_linking ? '开启 (需 heap 泄露)' : '关闭'}</span></div>
+      <div class="kv"><span class="k">__free_hook</span><span>${gv.free_hook ? '可用' : '已移除'}</span></div>
+      <div class="kv"><span class="k">攻击面</span><span>${esc(gv["攻击面"] || "?")}</span></div>` : ""}
       ${(heap.clues || []).map(c => `<div class="kv"><span class="${c.severity === '高危' || c.severity === '严重' ? 'sev-high' : 'sev-mid'}">${esc(c.severity)}</span><span>${esc(c.detail)}</span></div>`).join("")}`);
   }
 
@@ -200,7 +220,7 @@ function renderOverview(report) {
   // 兜底: 未硬编码渲染的 key → 通用折叠卡片 (插件分析器输出即所见, 不再改前端)
   const KNOWN_KEYS = new Set(["protections", "overflow", "format_string", "got", "rop",
     "bss_writable", "has_binsh", "heap_analysis", "angr_check", "win_targets",
-    "cross_validation", "summary", "path", "bits", "plt"]);
+    "cross_validation", "summary", "path", "bits", "plt", "static_libc"]);
   const extraKeys = Object.keys(report).filter(k => !KNOWN_KEYS.has(k));
   for (const k of extraKeys) {
     const body = `<details><summary>原始数据 (插件输出)</summary>` +
