@@ -56,16 +56,22 @@ class TestWebUI:
         funcs = json.loads(body)
         assert funcs, "应有函数列表"
 
-        # disasm + cfg (用列表第一个函数的十进制 start)
-        st, body = _get(port, f"/api/disasm/{funcs[0]['start']}")
-        assert st == 200 and json.loads(body)["lines"]
-        st, body = _get(port, f"/api/cfg/{funcs[0]['start']}")
+        # disasm + cfg: 找一个在 .text 里确实有指令的函数 (跳过 _init 等段外符号)
+        target = None
+        for f in funcs:
+            st, body = _get(port, f"/api/disasm/{f['start']}")
+            if st == 200 and json.loads(body).get("lines"):
+                target = f["start"]
+                break
+        assert target is not None, "应在 .text 找到可反汇编的函数"
+
+        st, body = _get(port, f"/api/cfg/{target}")
         assert st == 200
         cfg = json.loads(body)
         assert cfg["nodes"], "应有基本块"
 
         # hex 地址同样可解析
-        st, body = _get(port, f"/api/cfg/0x{funcs[0]['start']:x}")
+        st, body = _get(port, f"/api/cfg/0x{target:x}")
         assert st == 200
 
         # 路径穿越被拦
