@@ -489,7 +489,11 @@ function enableDragHandle(handleId, panelId, cyRef) {
     if (!dragging) return;
     // 左拖 (clientX 减小) → 面板变宽; 右拖 → 变窄
     let w = startW + (startX - e.clientX);
-    w = Math.max(240, Math.min(560, w));
+    w = Math.max(240, Math.min(w, 560));
+    // 窄窗口: 面板不超过容器可用宽 (图至少留 80px)
+    const wrapW = handle.parentElement.clientWidth;
+    if (wrapW > 0) w = Math.min(w, wrapW - 80);
+    w = Math.max(240, w);
     panel.style.width = w + "px";
     // 图容器尺寸变了, 实时重排 canvas (自适应)
     const inst = cyRef ? cyRef() : null;
