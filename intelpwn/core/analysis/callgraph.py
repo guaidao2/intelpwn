@@ -8,6 +8,7 @@
 """
 
 from collections import defaultdict
+import re
 
 # 敏感 PLT 函数 (危险调用目标, 命中即标橙)
 DANGER_PLT = {"read", "recv", "gets", "fgets", "strcpy", "strncpy", "strcat",
@@ -16,6 +17,49 @@ DANGER_PLT = {"read", "recv", "gets", "fgets", "strcpy", "strncpy", "strcat",
 
 # 入口函数候选
 ENTRY_NAMES = ("main", "_start", "entry")
+
+# CRT 样板函数 (glibc 启动/收尾样板, 前端默认隐藏 — 对 CTF 分析是噪音)
+CRT_FUNCS = {"_init", "_fini", "_dl_relocate_static_pie", "deregister_tm_clones",
+             "register_tm_clones", "__do_global_dtors_aux", "frame_dummy",
+             "__libc_csu_init", "__libc_csu_fini", "__do_global_ctors_aux"}
+
+
+def _got_map(path):
+    """GOT 地址 → 符号名 (.rela.plt/.rel.plt/.rela.dyn) — 解析间接调用用"""
+    got = {}
+    try:
+        from intelpwn.utils.binary import open_elf
+        with open_elf(path) as elf:
+            dynsym = elf.get_section_by_name('.dynsym')
+            if not dynsym:
+                return got
+            for secname in ('.rela.plt', '.rel.plt', '.rela.dyn'):
+                sec = elf.get_section_by_name(secname)
+                if not sec:
+                    continue
+                for reloc in sec.iter_relocations():
+                    try:
+                        name = dynsym.get_symbol(reloc['r_info_sym']).name
+                        if name:
+                            got[reloc['r_offset']] = name
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return got
+
+
+def _indirect_got_target(op_str, insn_addr, insn_size, got_map):
+    """call qword ptr [rip + disp] → (got_addr, 符号名); 非 rip 相对或无解析返回 None"""
+    m = re.search(r'\[rip\s*([+-])\s*(0x[0-9a-fA-F]+)\]', op_str or "")
+    if not m:
+        return None
+    disp = int(m.group(2), 16) * (1 if m.group(1) == '+' else -1)
+    got_addr = insn_addr + insn_size + disp
+    name = got_map.get(got_addr)
+    if not name:
+        return None
+    return got_addr, name
 
 
 def _direct_target(op_str):
@@ -96,19 +140,35 @@ def build_call_graph(path, results=None, func_bounds=None, sym_map=None, insns=N
     nodes = {}
     for start, _end, name in func_bounds:
         nodes[start] = {"id": start, "name": name, "addr": start, "kind": "func",
-                        "vuln": False, "danger": False, "entry": False, "on_path": False}
+                        "vuln": False, "danger": False, "entry": False, "on_path": False,
+                        "crt": name in CRT_FUNCS}
     for addr, name in sym_map.items():
-        if addr not in nodes:
-            nodes[addr] = {"id": addr, "name": name, "addr": addr,
-                           "kind": "plt" if name.endswith("@plt") else "func",
-                           "vuln": False, "danger": False, "entry": False, "on_path": False}
+        if addr in nodes or addr == 0:  # 0x0 = dynsym 版本化占位符 (无实义), 跳过
+            continue
+        nodes[addr] = {"id": addr, "name": name, "addr": addr,
+                       "kind": "plt" if name.endswith("@plt") else "func",
+                       "vuln": False, "danger": False, "entry": False, "on_path": False,
+                       "crt": name in CRT_FUNCS}
 
-    # ── 2. 调用边 ──
+    # ── 2. 调用边 (直接 + 经 GOT 的间接 call [rip+disp]) ──
+    got_map = _got_map(path)
     edges = set()
     for insn in insns:
         if insn.mnemonic != "call":
             continue
         tgt = _direct_target(insn.op_str)
+        if tgt is None:
+            # 间接调用: 经 GOT 解析 (call qword ptr [rip+disp] → 符号)
+            got_info = _indirect_got_target(insn.op_str, insn.address, getattr(insn, "size", 0), got_map)
+            if got_info:
+                got_addr, name = got_info
+                # 目标节点: 优先同名非 0x0 符号; 否则 GOT 槽伪节点
+                tgt = next((a for a, n in sym_map.items() if n == name and a != 0), None)
+                if tgt is None and got_addr not in nodes:
+                    nodes[got_addr] = {"id": got_addr, "name": name, "addr": got_addr,
+                                       "kind": "got", "vuln": False, "danger": False,
+                                       "entry": False, "on_path": False, "crt": False}
+                    tgt = got_addr
         if tgt is None or tgt not in nodes:
             continue
         caller = _find_caller(insn.address, func_bounds)

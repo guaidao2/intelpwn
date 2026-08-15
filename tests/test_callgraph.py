@@ -87,3 +87,33 @@ def test_plt_func_kind_still_danger():
     by_name = {n["name"]: n for n in g["nodes"]}
     assert by_name["read@plt"]["kind"] == "func"
     assert by_name["read@plt"]["danger"] is True
+
+
+def test_addr0_placeholder_filtered():
+    """dynsym 版本化占位符 (addr=0) 不建节点"""
+    bounds = [(0x1000, 0x1010, "caller")]
+    sym = {0x0: "__libc_start_main", 0x2000: "read@plt"}
+    insns = [_FakeInsn(0x1000, "call", "0x2000")]
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    assert all(n["addr"] != 0 for n in g["nodes"]), "0x0 占位符不应建节点"
+
+
+def test_indirect_got_call_edge():
+    """call qword ptr [rip+disp] 经 GOT 解析出边 (无 real GOT map 时跳过)"""
+    insns = [_FakeInsn(0x1000, "call", "0x2000"),
+             _FakeInsn(0x1005, "call", "qword ptr [rip + 0x2f47]")]
+    bounds = [(0x1000, 0x1010, "caller")]
+    sym = {0x2000: "read@plt"}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    edge = {(e["source"], e["target"]) for e in g["edges"]}
+    assert (0x1000, 0x2000) in edge
+    assert len(g["edges"]) == 1, "无 GOT 信息时间接调用应跳过"
+
+
+def test_crt_flag():
+    bounds = [(0x1000, 0x1010, "frame_dummy"), (0x1020, 0x1030, "real_func")]
+    sym = {}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=[])
+    by = {n["name"]: n for n in g["nodes"]}
+    assert by["frame_dummy"]["crt"] is True
+    assert by["real_func"]["crt"] is False

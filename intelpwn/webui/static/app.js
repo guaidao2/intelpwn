@@ -345,6 +345,7 @@ async function renderCFG(f) {
 /* ── 调用图 (全局关系) ─────────────────────────── */
 let cg = null;
 let cgLoaded = false;
+let showCrt = false;   // CRT 样板函数默认隐藏 (噪音)
 
 async function renderCallGraph() {
   const div = document.getElementById("cy-callgraph");
@@ -357,8 +358,14 @@ async function renderCallGraph() {
       div.innerHTML = "<p class='hint'>无调用图数据: " + esc(g.error || "") + "</p>";
       return;
     }
+    const visible = new Set();
+    for (const n of g.nodes) {
+      if (!showCrt && n.crt) continue;
+      visible.add(String(n.id));
+    }
     const elements = [];
     for (const n of g.nodes) {
+      if (!visible.has(String(n.id))) continue;
       const tag = n.entry ? "entry" : n.vuln ? "vuln" : n.danger ? "danger" : "norm";
       elements.push({
         data: { id: String(n.id), label: n.name,
@@ -366,7 +373,9 @@ async function renderCallGraph() {
       });
     }
     for (const e of g.edges) {
-      elements.push({ data: { id: `${e.source}->${e.target}`, source: String(e.source), target: String(e.target) } });
+      if (visible.has(String(e.source)) && visible.has(String(e.target))) {
+        elements.push({ data: { id: `${e.source}->${e.target}`, source: String(e.source), target: String(e.target) } });
+      }
     }
     cg = cytoscape({
       container: div,
@@ -450,6 +459,15 @@ const notesToggle = document.getElementById("notes-toggle");
 if (notesToggle) {
   notesToggle.onchange = () => {
     document.getElementById("disasm-box").classList.toggle("hide-sub", !notesToggle.checked);
+  };
+}
+
+/* CRT 样板函数开关 (调用图) */
+const crtToggle = document.getElementById("crt-toggle");
+if (crtToggle) {
+  crtToggle.onchange = () => {
+    showCrt = crtToggle.checked;
+    if (cgLoaded) renderCallGraph();
   };
 }
 
