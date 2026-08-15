@@ -386,6 +386,7 @@ async function renderCallGraph() {
             "color": "#c9d1d9", "font-size": "11px", "label": "data(label)",
             "width": "label", "height": 26, "shape": "round-rectangle",
             "text-valign": "center", "padding": "6px",
+            "text-wrap": "wrap", "text-max-width": 170,  // 长函数名换行, 节点不自适应撑宽
           } },
         { selector: "node[tag = 'vuln']", style: {
             "background-color": "#f85149", "border-color": "#ff7b72", "border-width": 3,
