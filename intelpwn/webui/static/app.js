@@ -472,6 +472,33 @@ if (crtToggle) {
   };
 }
 
+/* 可拖拽分隔条: 图 / 汇编面板宽度手调 (自适应) */
+function enableDragHandle(handleId, panelId) {
+  const handle = document.getElementById(handleId);
+  const panel = document.getElementById(panelId);
+  if (!handle || !panel) return;
+  let dragging = false;
+  const wrap = handle.parentElement;
+  handle.addEventListener("mousedown", e => {
+    dragging = true;
+    handle.classList.add("dragging");
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    const rect = wrap.getBoundingClientRect();
+    // 面板宽 = 容器右缘 - 鼠标 x - 右内边距; 限制 240~520px
+    let w = rect.right - e.clientX - 10;
+    w = Math.max(240, Math.min(520, w));
+    panel.style.width = w + "px";
+  });
+  document.addEventListener("mouseup", () => {
+    if (dragging) { dragging = false; handle.classList.remove("dragging"); }
+  });
+}
+enableDragHandle("cfg-handle", "cfg-detail");
+enableDragHandle("cg-handle", "cfg-detail-callgraph");
+
 /* ── 初始化 ───────────────────────────────────────── */
 (async function init() {
   try {
