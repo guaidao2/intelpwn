@@ -154,6 +154,7 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
         lea_insn = ""
         has_danger = False
         danger_addr = ""
+        danger_site = None
         danger_conf = "高"
 
         for idx, insn in enumerate(func_insns):
@@ -225,6 +226,7 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
                 if truly_dangerous:
                     has_danger = True
                     danger_addr = f"{callee} ({insn.op_str})"
+                    danger_site = insn.address
                     if arg_size > 0:
                         danger_addr += f" size={arg_size}"
                     danger_conf = conf
@@ -237,6 +239,7 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
                 "stack_size": stack_size,
                 "calculated_padding": padding,
                 "dangerous_call": danger_addr,
+                "call_site": hex(danger_site) if danger_site else None,
                 "lea_insn": lea_insn,
                 "confidence": danger_conf,
             })

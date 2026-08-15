@@ -45,7 +45,7 @@ def _angr_reachability(path: str, call_addr: int, timeout: int = 60) -> dict:
         proj = angr.Project(path, auto_load_libs=False)
         state = proj.factory.full_init_state()
         simgr = proj.factory.simulation_manager(state)
-        simgr.explore(find=call_addr, num_find=1, timeout=timeout)
+        simgr.explore(find=call_addr, num_find=1, num_steps=3000, timeout=timeout)
         if simgr.found:
             return {"reachable": True, "steps": simgr.found[0].history.depth}
         if simgr.errored:
@@ -66,7 +66,7 @@ def _angr_size_check(path: str, call_addr: int, callee: str, stack_size: int,
         proj = angr.Project(path, auto_load_libs=False)
         state = proj.factory.full_init_state()
         simgr = proj.factory.simulation_manager(state)
-        simgr.explore(find=call_addr, num_find=1, timeout=timeout)
+        simgr.explore(find=call_addr, num_find=1, num_steps=3000, timeout=timeout)
         if not simgr.found:
             return {"status": "unknown", "reason": "调用点不可达"}
         st = simgr.found[0]
@@ -230,7 +230,7 @@ def _angr_discover(path: str, results: dict, max_sites: int = 20) -> dict:
             proj = angr.Project(path, auto_load_libs=False)
             state = proj.factory.full_init_state()
             simgr = proj.factory.simulation_manager(state)
-            simgr.explore(find=call_addr, num_find=1, timeout=30)
+            simgr.explore(find=call_addr, num_find=1, num_steps=2000, timeout=30)
         except Exception:
             continue
         if not simgr.found:
@@ -296,7 +296,7 @@ def _angr_discover(path: str, results: dict, max_sites: int = 20) -> dict:
             proj = angr.Project(path, auto_load_libs=False)
             state = proj.factory.full_init_state()
             simgr = proj.factory.simulation_manager(state)
-            simgr.explore(find=call_addr, num_find=1, timeout=30)
+            simgr.explore(find=call_addr, num_find=1, num_steps=2000, timeout=30)
             if not simgr.found:
                 continue
             st = simgr.found[0]

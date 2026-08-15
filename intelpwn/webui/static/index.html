@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IntelPwn — 可视化分析</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>IntelPwn 可视化分析</h1>
+  <span id="binary-name" class="sub"></span>
+</header>
+<div id="layout">
+  <aside id="sidebar">
+    <h3>函数列表</h3>
+    <ul id="func-list"><li class="hint">加载中...</li></ul>
+  </aside>
+  <main>
+    <nav id="tabs">
+      <button class="tab active" data-tab="overview">总览</button>
+      <button class="tab" data-tab="disasm">反汇编</button>
+      <button class="tab" data-tab="cfg">CFG 图</button>
+    </nav>
+    <section id="tab-overview" class="tab-panel active"></section>
+    <section id="tab-disasm" class="tab-panel">
+      <h2 id="disasm-title">选择左侧函数查看反汇编</h2>
+      <pre id="disasm-box"></pre>
+    </section>
+    <section id="tab-cfg" class="tab-panel">
+      <h2 id="cfg-title">选择左侧函数查看 CFG</h2>
+      <div id="cy"></div>
+    </section>
+  </main>
+</div>
+<script src="/static/cytoscape.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

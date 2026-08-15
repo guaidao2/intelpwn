@@ -175,6 +175,18 @@ def cmd_analyze(args):
 
     print_success("Analysis complete.")
 
+    # --web 可视化服务 (仅单文件分析; json/dir 模式忽略)
+    if getattr(args, 'web', False):
+        if args.json:
+            print_warning("--web 与 --json 不兼容, 跳过可视化服务")
+        elif args.dir:
+            print_warning("--web 仅支持单文件分析, 批量模式跳过可视化服务")
+        else:
+            from intelpwn.core.webui import serve
+            serve(results, path,
+                  port=args.web_port if args.web_port is not None else 5000,
+                  explicit_port=args.web_port is not None)
+
 
 def cmd_verify(args):
     """定点验证 — analyze --verify 的别名 (静态 + 动态 + 交叉验证)"""
@@ -195,6 +207,10 @@ def main():
     p.add_argument("--remote", help="远程目标地址 host:port")
     p.add_argument("--verify", action="store_true", help="执行动态验证 + 交叉验证 (默认关)")
     p.add_argument("--no-verify", action="store_true", help="显式关闭动态验证")
+    p.add_argument("--web", action="store_true",
+                   help="分析后启动本地可视化服务 (0.0.0.0, 默认端口 5000)")
+    p.add_argument("--web-port", type=int, default=None,
+                   help="可视化服务端口 (默认 5000, 被占自动递增; 显式指定则严格使用)")
     p.add_argument("--json", action="store_true", help="以 JSON 格式输出结果")
     p.add_argument("--no-exploit", action="store_true", help="不自动生成 exploit 脚本")
 
