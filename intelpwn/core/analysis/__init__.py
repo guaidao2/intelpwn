@@ -65,6 +65,7 @@ def run_extra_analyzers(path: str, results: dict) -> dict:
 try:
     from . import angr_analysis  # noqa: F401 — 自注册 angr_check 插件
     from . import static_libc   # noqa: F401 — 自注册 static_libc 插件 (静态链接专项)
+    from . import menu          # noqa: F401 — 自注册 menu 分析器 (菜单交互识别)
 except Exception:
     pass
 
