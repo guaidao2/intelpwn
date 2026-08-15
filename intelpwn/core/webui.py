@@ -247,10 +247,11 @@ class _Handler(BaseHTTPRequestHandler):
         from intelpwn.core.analysis.callgraph import build_call_graph
         pre = _get_disas(self.binary)
         insns = pre[0] if pre else None
+        bits = pre[1] if pre else None
         return build_call_graph(self.binary, results=self.results,
                                 func_bounds=_func_bounds(self.binary),
                                 sym_map=_sym_map_for(self.binary),
-                                insns=insns)
+                                insns=insns, bits=bits)
 
     def _api_cfg(self, func_addr):
         """函数基本块 CFG, 标记漏洞调用点所在块"""

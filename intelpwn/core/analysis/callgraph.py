@@ -73,10 +73,10 @@ def _sym_map_local(path, bits):
     return smap
 
 
-def build_call_graph(path, results=None, func_bounds=None, sym_map=None, insns=None):
+def build_call_graph(path, results=None, func_bounds=None, sym_map=None, insns=None, bits=None):
     """构建函数调用图.
 
-    path: 二进制路径; results: 分析结果 (标注漏洞); func_bounds/sym_map/insns 可传入复用.
+    path: 二进制路径; results: 分析结果 (标注漏洞); func_bounds/sym_map/insns/bits 可传入复用.
     返回 {"nodes": [...], "edges": [...], "error": str|None}
     """
     from intelpwn.core.analysis.overflow import disassemble_text
@@ -86,13 +86,11 @@ def build_call_graph(path, results=None, func_bounds=None, sym_map=None, insns=N
         if r is None:
             return {"nodes": [], "edges": [], "error": "反汇编失败"}
         insns, bits, _e_machine, _base = r
-    else:
-        bits = 64
 
     if func_bounds is None:
         func_bounds = _func_bounds_local(path)
     if sym_map is None:
-        sym_map = _sym_map_local(path, bits)
+        sym_map = _sym_map_local(path, bits or 64)
 
     # ── 1. 节点: 真实函数 + PLT stub ──
     nodes = {}
@@ -138,6 +136,7 @@ def build_call_graph(path, results=None, func_bounds=None, sym_map=None, insns=N
 
     for nid, node in nodes.items():
         # danger 按 @plt 名字后缀判定 (不管节点 kind — symtab 里 read@plt 可能是 STT_FUNC)
+        # 取舍: 用户自定义的同名函数 (如 wrapper read) 也会标橙, 属误报扩大但可接受
         base = node["name"][:-4] if node["name"].endswith("@plt") else node["name"]
         if base in DANGER_PLT:
             node["danger"] = True
