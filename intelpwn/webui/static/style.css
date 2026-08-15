@@ -33,10 +33,13 @@ pre { white-space: pre-wrap; word-break: break-all; }
 
 /* 报告区块 */
 .card { background: var(--panel); border: 1px solid var(--border);
-        border-radius: 6px; padding: 12px 14px; margin-bottom: 12px; }
+        border-radius: 6px; padding: 12px 14px; margin-bottom: 12px;
+        overflow: hidden; }  /* 防止长内容溢出压到相邻卡片 */
 .card h3 { color: var(--accent); font-size: 13px; margin-bottom: 8px; }
-.kv { display: grid; grid-template-columns: 140px 1fr; gap: 4px 12px; }
+/* 1fr → minmax(0,1fr): 允许值列收缩换行而不是溢出重叠 (GOT 地址+[LEAK] 等长内容) */
+.kv { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 4px 12px; }
 .kv .k { color: var(--dim); }
+.kv > * { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .sev-high { color: var(--danger); font-weight: bold; }
 .sev-mid { color: var(--warn); font-weight: bold; }
 .sev-low { color: var(--ok); }
