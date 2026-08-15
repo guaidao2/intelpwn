@@ -61,9 +61,16 @@ pre { white-space: pre-wrap; word-break: break-all; }
 
 /* CFG */
 #cfg-wrap { display: flex; gap: 12px; align-items: stretch; }
+#cg-wrap { display: flex; gap: 12px; align-items: stretch; }
 #cy { flex: 1; height: calc(100vh - 240px); background: var(--panel);
       border: 1px solid var(--border); border-radius: 6px; }
 #cfg-detail { width: 330px; flex-shrink: 0; max-height: calc(100vh - 240px);
+      overflow-y: auto; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px; font-size: 12px; }
+/* 调用图面板 (复用 #cfg-wrap 布局, 但容器 id 不同, 需各自定义尺寸) */
+#cy-callgraph { flex: 1; height: calc(100vh - 240px); background: var(--panel);
+      border: 1px solid var(--border); border-radius: 6px; }
+#cfg-detail-callgraph { width: 330px; flex-shrink: 0; max-height: calc(100vh - 240px);
       overflow-y: auto; background: var(--panel); border: 1px solid var(--border);
       border-radius: 6px; padding: 10px; font-size: 12px; }
 #cfg-detail .cfg-detail-title { margin-bottom: 8px; color: var(--dim); font-size: 13px; }
