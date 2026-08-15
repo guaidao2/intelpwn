@@ -16,7 +16,8 @@ BIN = "challenges/challenge_ret2win"
 def _start_server(results, port=5099):
     from intelpwn.core.webui import serve
     t = threading.Thread(target=serve, args=(results, BIN, "127.0.0.1", port),
-                         kwargs={"open_browser": False}, daemon=True)
+                         kwargs={"explicit_port": True, "open_browser": False},
+                         daemon=True)
     t.start()
     for _ in range(50):
         try:
