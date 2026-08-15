@@ -36,6 +36,7 @@ PACKAGES=(
     libffi-dev
     gcc
     g++
+    gcc-multilib      # 编译 x86 32 位靶子 (challenge_x86_vuln)
     file
     xxd
     checksec          # ELF 保护检查
@@ -129,6 +130,10 @@ echo ""
 info "Verifying installation..."
 FAIL=0
 
+# 模块检查用安装目标 python (venv 优先, 回退系统)
+PY=python3
+[ -x ~/.intelpwn-venv/bin/python3 ] && PY=~/.intelpwn-venv/bin/python3
+
 check_cmd() {
     if command -v "$1" &>/dev/null; then
         echo -e "  ${GREEN}[+]${NC} $1: $(command -v $1)"
@@ -145,8 +150,8 @@ check_cmd readelf
 check_cmd checksec
 
 check_mod() {
-    if python3 -c "import $1; print(getattr($1, '__version__', 'ok'))" &>/dev/null; then
-        local ver=$(python3 -c "import $1; print(getattr($1, '__version__', 'ok'))" 2>/dev/null)
+    if "$PY" -c "import $1; print(getattr($1, '__version__', 'ok'))" &>/dev/null; then
+        local ver=$("$PY" -c "import $1; print(getattr($1, '__version__', 'ok'))" 2>/dev/null)
         echo -e "  ${GREEN}[+]${NC} python3-$1: $ver"
     else
         echo -e "  ${RED}[x]${NC} python3-$1: NOT FOUND"
@@ -158,8 +163,8 @@ check_mod pwn
 check_mod capstone
 check_mod elftools
 
-if python3 -c "import angr" &>/dev/null; then
-    echo -e "  ${GREEN}[+]${NC} python3-angr: $(python3 -c 'import angr; print(angr.__version__)')"
+if "$PY" -c "import angr" &>/dev/null 2>&1; then
+    echo -e "  ${GREEN}[+]${NC} python3-angr: $("$PY" -c 'import angr; print(angr.__version__)')"
 else
     echo -e "  ${YELLOW}[!]${NC} python3-angr: 未安装 (angr_check 插件将跳过)"
 fi
