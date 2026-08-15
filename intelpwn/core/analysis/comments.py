@@ -18,8 +18,15 @@ SYSCALLS = {
     59: "execve", 60: "exit", 62: "kill", 231: "exit_group", 322: "execveat",
 }
 
+# x86 (32 位) syscall 号 → 名称 — 号与 x86_64 完全不同 (x86 中 execve=0x0b)
+SYSCALLS_X86 = {
+    0x01: "exit", 0x03: "read", 0x04: "write", 0x05: "open", 0x06: "close",
+    0x0b: "execve", 0x2d: "brk", 0x5a: "mmap", 0x7d: "mprotect", 0xfc: "exit_group",
+}
+
 # 装入 eax/rax 即黄的"危险 syscall"号 (exec 类 / 内存权限类)
 DANGER_SYSCALLS = {9: "mmap", 10: "mprotect", 59: "execve", 322: "execveat"}
+DANGER_SYSCALLS_X86 = {0x0b: "execve", 0x5a: "mmap", 0x7d: "mprotect"}
 
 # call 命中即黄的敏感函数子串
 SENSITIVE_CALL_SUBSTR = ("system", "exec", "strcpy", "strcat", "gets",
@@ -105,15 +112,18 @@ def _find_call_idx(ins, call_site):
     return None
 
 
-def annotate_disasm(lines, entry=None, sym_map=None):
+def annotate_disasm(lines, entry=None, sym_map=None, bits=64):
     """为反汇编行添加注释 (原地追加 note/note_level 字段).
 
     lines:   [{addr, mnemonic, op_str, ...}]
     entry:   overflow 条目 (或 None) — 提供 call_site/calculated_padding/stack_size/function
     sym_map: {addr: 符号名} (用于 call 解析)
+    bits:    64 (默认) 或 32 — syscall 号按架构选表 (x86 与 x86_64 完全不同)
     返回:    新列表, 每行含 note(str|None) / note_level(red|yellow|gray|None)
     """
     sym_map = sym_map or {}
+    syscalls = SYSCALLS_X86 if bits == 32 else SYSCALLS
+    danger_syscalls = DANGER_SYSCALLS_X86 if bits == 32 else DANGER_SYSCALLS
     ins = list(lines)
 
     # ── 上下文: 漏洞条目 ──
@@ -199,11 +209,11 @@ def annotate_disasm(lines, entry=None, sym_map=None):
             if "fs:[0x28]" in op_low or "fs:0x28" in op_low:
                 note = "⚠ 加载 canary (栈保护开启)"
                 level = "yellow"
-            elif v in DANGER_SYSCALLS and dest in ("eax", "rax"):
-                note = f"⚠ 常量 0x{v:x} = syscall {DANGER_SYSCALLS[v]} 号? (规则猜测)"
+            elif v in danger_syscalls and dest in ("eax", "rax"):
+                note = f"⚠ 常量 0x{v:x} = syscall {danger_syscalls[v]} 号? (规则猜测)"
                 level = "yellow"
-            elif v in SYSCALLS and v != 0 and dest in ("eax", "rax"):
-                note = f"syscall 号 {v:#x} = {SYSCALLS[v]}"
+            elif v in syscalls and v != 0 and dest in ("eax", "rax"):
+                note = f"syscall 号 {v:#x} = {syscalls[v]}"
                 level = "gray"
         elif mnem == "syscall" and level is None:
             note = "⚠ 发起系统调用 (若 rax=execve 则可得 shell)"

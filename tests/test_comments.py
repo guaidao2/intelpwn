@@ -188,3 +188,28 @@ def test_unrelated_no_note():
     lines = [{"addr": 0x10, "mnemonic": "mov", "op_str": "edi, 0x7fff"}]
     out = annotate_disasm(lines, None, SYM)
     assert out[0]["note"] is None
+
+
+def test_x86_32_syscall_table():
+    """32 位: execve 是 0x0b, 不是 0x3b — 按架构选表"""
+    lines = [{"addr": 0x10, "mnemonic": "mov", "op_str": "eax, 0x0b"},
+             {"addr": 0x14, "mnemonic": "mov", "op_str": "eax, 0x3b"}]
+    out32 = annotate_disasm(lines, None, {}, bits=32)
+    assert out32[0]["note_level"] == "yellow" and "execve" in out32[0]["note"]
+    assert out32[1]["note"] is None, "0x3b 不是 32 位 syscall 号, 不应注释"
+
+
+def test_x86_64_syscall_table():
+    """64 位: execve 是 0x3b"""
+    lines = [{"addr": 0x10, "mnemonic": "mov", "op_str": "eax, 0x3b"}]
+    out64 = annotate_disasm(lines, None, {}, bits=64)
+    assert out64[0]["note_level"] == "yellow" and "execve" in out64[0]["note"]
+
+
+def test_x86_32_mmap_mprotect_numbers():
+    """i386 syscall 号: mmap=0x5a, mprotect=0x7d (与 x86_64 完全不同)"""
+    lines = [{"addr": 0x10, "mnemonic": "mov", "op_str": "eax, 0x5a"},
+             {"addr": 0x14, "mnemonic": "mov", "op_str": "eax, 0x7d"}]
+    out = annotate_disasm(lines, None, {}, bits=32)
+    assert "mmap" in out[0]["note"]
+    assert "mprotect" in out[1]["note"]

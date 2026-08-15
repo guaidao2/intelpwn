@@ -117,3 +117,97 @@ def test_crt_flag():
     by = {n["name"]: n for n in g["nodes"]}
     assert by["frame_dummy"]["crt"] is True
     assert by["real_func"]["crt"] is False
+
+
+def test_reg_indirect_call_resolved():
+    """call rax 前有 mov rax, 常量 → 解析出边 (函数指针场景)"""
+    insns = [
+        _FakeInsn(0x1000, "mov", "rax, 0x2000"),
+        _FakeInsn(0x1007, "call", "rax"),
+        _FakeInsn(0x100c, "call", "rbx"),  # 无装载 → 跳过
+    ]
+    bounds = [(0x1000, 0x1010, "caller")]
+    sym = {0x2000: "target"}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    edge = {(e["source"], e["target"]) for e in g["edges"]}
+    assert (0x1000, 0x2000) in edge, "call rax (mov rax,0x2000) 应解析出边"
+    assert len(g["edges"]) == 1, "无装载的 call rbx 应跳过"
+
+
+def test_reg_indirect_dead_const_not_resolved():
+    """常量装载后 reg 被再次写入 (非常量) → 死值, 不应解析"""
+    insns = [
+        _FakeInsn(0x1000, "mov", "rax, 0x2000"),   # 旧常量
+        _FakeInsn(0x1007, "mov", "rax, rbx"),      # 重新写入 (寄存器来源)
+        _FakeInsn(0x100a, "call", "rax"),
+    ]
+    bounds = [(0x1000, 0x1010, "caller")]
+    sym = {0x2000: "target"}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    assert g["edges"] == [], "死常量不应解析出边"
+
+
+def test_reg_indirect_mem_disp_not_resolved():
+    """lea rax, [rbp-0x20] / [rip+0x2000] 内存位移不应被当常量"""
+    insns = [
+        _FakeInsn(0x1000, "lea", "rax, [rbp - 0x20]"),
+        _FakeInsn(0x1005, "call", "rax"),
+        _FakeInsn(0x1010, "lea", "rbx, [rip + 0x2000]"),
+        _FakeInsn(0x1017, "call", "rbx"),
+    ]
+    bounds = [(0x1000, 0x1020, "caller")]
+    sym = {0x20: "bogus", 0x2000: "bogus2"}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    assert g["edges"] == [], "内存位移不应解析为常量目标"
+
+
+def test_reg_indirect_pop_stops_scan():
+    """pop rax 写即终止 (操作数是纯寄存器)"""
+    insns = [
+        _FakeInsn(0x1000, "mov", "rax, 0x2000"),
+        _FakeInsn(0x1007, "pop", "rax"),
+        _FakeInsn(0x1008, "call", "rax"),
+    ]
+    bounds = [(0x1000, 0x1010, "caller")]
+    sym = {0x2000: "target"}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    assert g["edges"] == [], "pop rax 后常量已死, 不应解析"
+
+
+def test_reg_indirect_arith_const_not_target():
+    """xor/add/sub reg, 常量 不是地址装载, 不应解析为目标"""
+    insns = [
+        _FakeInsn(0x1000, "xor", "rax, 0x2000"),
+        _FakeInsn(0x1005, "call", "rax"),
+    ]
+    bounds = [(0x1000, 0x1010, "caller")]
+    sym = {0x2000: "target"}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    assert g["edges"] == [], "xor rax, 0x2000 不是地址, 不应出边"
+
+
+def test_reg_indirect_other_reg_write_continues():
+    """写其他寄存器 (mov rdx, X) 不终止对 rax 的常量回看"""
+    insns = [
+        _FakeInsn(0x1000, "mov", "rax, 0x2000"),
+        _FakeInsn(0x1007, "mov", "rdx, 0x3000"),   # 其他寄存器, 不影响
+        _FakeInsn(0x100a, "call", "rax"),
+    ]
+    bounds = [(0x1000, 0x1010, "caller")]
+    sym = {0x2000: "target", 0x3000: "other"}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    edge = {(e["source"], e["target"]) for e in g["edges"]}
+    assert (0x1000, 0x2000) in edge, "其他寄存器写入不应中断 rax 常量解析"
+
+
+def test_reg_indirect_32bit_write_terminates():
+    """xor eax, eax (32 位同族清零) 终止扫描 — 防解析到更旧 64 位常量"""
+    insns = [
+        _FakeInsn(0x1000, "mov", "rax, 0x2000"),
+        _FakeInsn(0x1007, "xor", "eax, eax"),      # 32 位同族清零 → 常量已死
+        _FakeInsn(0x100a, "call", "rax"),
+    ]
+    bounds = [(0x1000, 0x1010, "caller")]
+    sym = {0x2000: "target", 0x1234: "bogus"}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    assert g["edges"] == [], "32 位同族清零后旧常量已死"

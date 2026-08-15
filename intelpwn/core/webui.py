@@ -14,6 +14,7 @@ API:
 """
 
 import json
+import logging
 import os
 import re
 import sys
@@ -92,8 +93,8 @@ def _sym_map_for(path):
         from intelpwn.core.analysis.win_targets import _build_plt_map
         for stub, name in _build_plt_map(path, bits).items():
             smap[stub] = name + "@plt"
-    except Exception:
-        pass
+    except Exception as e:  # PLT 解析失败会丢 call 注释 — 记日志而非静默
+        logging.getLogger("intelpwn").warning("符号表/PLT 解析失败 %s: %s", path, e)
     with _sym_lock:
         _sym_map_cache[path] = smap
     return smap
@@ -235,8 +236,10 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             from intelpwn.core.analysis.comments import annotate_disasm
             sym_map = _sym_map_for(self.binary)
-            lines = annotate_disasm(lines, entry, sym_map)
-        except Exception:
+            bits = pre[1] if pre else 64
+            lines = annotate_disasm(lines, entry, sym_map, bits=bits)
+        except Exception as e:  # 注释引擎失败不阻断反汇编 — 记日志
+            logging.getLogger("intelpwn").warning("注释引擎异常: %s", e)
             for ln in lines:
                 ln.setdefault("note", None)
                 ln.setdefault("note_level", None)

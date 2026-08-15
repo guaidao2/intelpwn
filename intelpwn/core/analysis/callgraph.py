@@ -8,7 +8,10 @@
 """
 
 from collections import defaultdict
+import logging
 import re
+
+log = logging.getLogger("intelpwn.callgraph")
 
 # 敏感 PLT 函数 (危险调用目标, 命中即标橙)
 DANGER_PLT = {"read", "recv", "gets", "fgets", "strcpy", "strncpy", "strcat",
@@ -43,9 +46,9 @@ def _got_map(path):
                         if name:
                             got[reloc['r_offset']] = name
                     except Exception:
-                        pass
-    except Exception:
-        pass
+                        pass  # 单条重定位解析失败, 跳过不影响整体
+    except Exception as e:
+        log.warning("GOT 重定位解析失败 %s: %s", path, e)
     return got
 
 
@@ -60,6 +63,55 @@ def _indirect_got_target(op_str, insn_addr, insn_size, got_map):
     if not name:
         return None
     return got_addr, name
+
+
+# 寄存器间接调用: call rax / call r12 等纯寄存器操作数
+_REG_CALL = re.compile(r'^(r(ax|bx|cx|dx|si|di|sp|bp|8|9|10|11|12|13|14|15)|e(ax|bx|cx|dx|si|di))$')
+
+
+def _call_reg_target(op_str, insns, insn_index):
+    """call <reg>: 回看 6 条内 mov/lea reg, <常量地址> → 目标地址; 无则 None.
+
+    保守策略: 只解析 1) mov reg, <裸 0x 常量> 2) lea reg, [<绝对地址>];
+    命中任何其他对 reg 的写入 (寄存器来源/rip 相对/栈偏移/xor/pop) 立即停止 —
+    常量已死, 不继续回看更旧的值 (防死值误报).
+    """
+    op = (op_str or "").strip()
+    if not _REG_CALL.match(op):
+        return None
+    reg = op.lower()
+    # 32 位同族 (eax/rax) 写入也要终止扫描 — 复用 comments._reg_prefixed
+    from intelpwn.core.analysis.comments import _reg_prefixed
+    WRITERS = ("mov", "lea", "xor", "add", "sub", "movzx", "movsxd", "pop")
+    for j in range(insn_index - 1, max(-1, insn_index - 7), -1):
+        prev = insns[j]
+        if prev.mnemonic not in WRITERS:
+            continue
+        p_op = (prev.op_str or "").lower()
+        # pop: 只 pop 本族 reg 才终止, pop 其他 reg 继续回看
+        if prev.mnemonic == "pop":
+            return None if _reg_prefixed(p_op, reg) else None
+        if not _reg_prefixed(p_op, reg):
+            continue  # 写的是其他寄存器, 不影响本 reg 的常量
+        src = p_op.split(",", 1)[1].strip()
+        # 只有 mov/lea 的常量才可能是地址; xor/add/sub/movzx/movsxd 的常量不是
+        if prev.mnemonic not in ("mov", "lea"):
+            return None  # 写即终止 (非常量装载)
+        # 裸常量: mov reg, 0x...
+        if re.fullmatch(r'0x[0-9a-f]+', src):
+            try:
+                return int(src, 16)
+            except ValueError:
+                return None
+        # 绝对地址: lea reg, [0x...]
+        if re.fullmatch(r'\[0x[0-9a-f]+\]', src):
+            try:
+                return int(src[1:-1], 16)
+            except ValueError:
+                return None
+        # 其他写入 (寄存器/rip相对/栈偏移) → 常量已死, 停止
+        return None
+    return None
 
 
 def _direct_target(op_str):
@@ -89,8 +141,8 @@ def _func_bounds_local(path):
                 for sym in sec.iter_symbols():
                     if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
                         funcs.append((sym['st_value'], sym['st_value'] + sym['st_size'], sym.name))
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("函数边界解析失败 %s: %s", path, e)
     return funcs
 
 
@@ -112,8 +164,8 @@ def _sym_map_local(path, bits):
     try:
         for stub, name in _build_plt_map(path, bits).items():
             smap[stub] = name + "@plt"
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("PLT stub 解析失败 %s: %s", path, e)
     return smap
 
 
@@ -150,15 +202,15 @@ def build_call_graph(path, results=None, func_bounds=None, sym_map=None, insns=N
                        "vuln": False, "danger": False, "entry": False, "on_path": False,
                        "crt": name in CRT_FUNCS}
 
-    # ── 2. 调用边 (直接 + 经 GOT 的间接 call [rip+disp]) ──
+    # ── 2. 调用边 (直接 + 经 GOT 的间接 call [rip+disp] + 寄存器间接 call reg) ──
     got_map = _got_map(path)
     edges = set()
-    for insn in insns:
+    for idx, insn in enumerate(insns):
         if insn.mnemonic != "call":
             continue
         tgt = _direct_target(insn.op_str)
         if tgt is None:
-            # 间接调用: 经 GOT 解析 (call qword ptr [rip+disp] → 符号)
+            # 间接调用: 先经 GOT 解析 (call qword ptr [rip+disp] → 符号)
             got_info = _indirect_got_target(insn.op_str, insn.address, getattr(insn, "size", 0), got_map)
             if got_info:
                 got_addr, name = got_info
@@ -169,6 +221,11 @@ def build_call_graph(path, results=None, func_bounds=None, sym_map=None, insns=N
                                        "kind": "got", "vuln": False, "danger": False,
                                        "entry": False, "on_path": False, "crt": False}
                     tgt = got_addr
+            else:
+                # 寄存器间接: call reg, 回看 mov/lea reg, 常量 (函数指针/vtable 场景)
+                reg_tgt = _call_reg_target(insn.op_str, insns, idx)
+                if reg_tgt is not None and reg_tgt in nodes:
+                    tgt = reg_tgt
         if tgt is None or tgt not in nodes:
             continue
         caller = _find_caller(insn.address, func_bounds)
