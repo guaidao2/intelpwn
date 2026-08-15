@@ -70,17 +70,19 @@ def _vuln_call_site(v) -> int:
 
 
 def _resolve_func_addr(raw: str, binary: str):
-    """地址解析: 前端可能发 hex 或十进制; 按函数存在性消歧"""
-    candidates = []
-    try:
-        candidates.append(int(raw, 16))
-    except ValueError:
-        pass
-    try:
-        candidates.append(int(raw, 10))
-    except ValueError:
-        pass
+    """地址解析: 前端发十进制; 仅当字符串形如 hex (0x 前缀或含 a-f) 才按 hex 解析"""
     bounds = {s: e for s, e, _ in _func_bounds(binary)}
+    stripped = raw.strip()
+    candidates = []
+    if stripped.lower().startswith("0x") or any(ch in "abcdefABCDEF" for ch in stripped):
+        try:
+            candidates.append(int(stripped, 16))
+        except ValueError:
+            pass
+    try:
+        candidates.append(int(stripped, 10))
+    except ValueError:
+        pass
     for a in candidates:
         if a in bounds:
             return a
@@ -188,7 +190,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _serve_static(self, rel):
         base = os.path.normpath(os.path.abspath(WEBUI_STATIC))
         fp = os.path.normpath(os.path.join(base, rel))
-        if not fp.startswith(base):  # 路径穿越防护
+        if not (fp == base or fp.startswith(base + os.sep)):  # 路径穿越防护 (含分隔符)
             self.send_error(403)
             return
         try:
@@ -233,16 +235,20 @@ def serve(results: dict, binary: str, host: str = "0.0.0.0",
     _Handler.results = results
     _Handler.binary = binary
 
-    final_port = port if explicit_port else _pick_port(port)
-    if final_port is None:
-        print(f"[!] 端口 {port}-{port + 19} 均被占用, 请用 --web-port 指定")
-        sys.exit(1)
-    if explicit_port and final_port != port:
-        # 显式指定且被占 → 报错不自动换
-        print(f"[!] 端口 {port} 已被占用, 请用 --web-port 换一个")
-        sys.exit(1)
-
-    httpd = ThreadingHTTPServer((host, final_port), _Handler)
+    if explicit_port:
+        # 显式指定: 严格使用, 被占直接报错 (不自动递增)
+        final_port = port
+        try:
+            httpd = ThreadingHTTPServer((host, final_port), _Handler)
+        except OSError:
+            print(f"[!] 端口 {port} 已被占用, 请用 --web-port 换一个")
+            sys.exit(1)
+    else:
+        final_port = _pick_port(port)
+        if final_port is None:
+            print(f"[!] 端口 {port}-{port + 19} 均被占用, 请用 --web-port 指定")
+            sys.exit(1)
+        httpd = ThreadingHTTPServer((host, final_port), _Handler)
     url = f"http://{host}:{final_port}/"
     print(f"[+] 可视化服务已启动: {url}")
     print(f"    分析目标: {binary}")

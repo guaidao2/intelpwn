@@ -50,6 +50,9 @@ def _angr_reachability(path: str, call_addr: int, timeout: int = 60) -> dict:
             return {"reachable": True, "steps": simgr.found[0].history.depth}
         if simgr.errored:
             return {"reachable": None, "reason": "探索出错"}
+        if simgr.active or simgr.stashes.get("deadended"):
+            # 步数/超时截断或仍有活动状态 → 未确认, 不能当"不可达"降级
+            return {"reachable": None, "reason": "探索截断 (步数/超时上限), 无法确认可达性"}
         return {"reachable": False, "reason": "未找到到调用点的路径 (可能为死代码)"}
     except Exception as e:
         return {"reachable": None, "reason": f"angr 错误: {type(e).__name__}"}
@@ -234,7 +237,13 @@ def _angr_discover(path: str, results: dict, max_sites: int = 20) -> dict:
         except Exception:
             continue
         if not simgr.found:
-            continue  # 不可达, 跳过
+            if simgr.active or simgr.stashes.get("deadended"):
+                # 探索截断 → 不静默跳过, 记为未知
+                discovered.append({"callee": callee, "call_addr": hex(call_addr),
+                                   "static_detected": call_addr in static_calls,
+                                   "status": "truncated",
+                                   "reason": "符号执行截断, 无法确认"})
+            continue  # 不可达/截断, 跳过深入分析
         st = simgr.found[0]
 
         entry = {"callee": callee, "call_addr": hex(call_addr),

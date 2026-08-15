@@ -94,7 +94,12 @@ def build_function_cfg(path: str, func_start: int, func_end: int,
     starts = {func_start}
     for i, insn in enumerate(fi):
         mnemo = insn.mnemonic
-        if mnemo in ('jmp',) or (mnemo.startswith('j') and mnemo != 'jmp') or mnemo == 'call':
+        if mnemo == 'jmp':
+            # 无条件跳转: 只加目标, 不加 fallthrough (避免孤儿节点)
+            for op in insn.operands:
+                if op.type == 1:  # immediate 目标
+                    starts.add(op.imm)
+        elif (mnemo.startswith('j') and mnemo != 'jmp') or mnemo == 'call':
             for op in insn.operands:
                 if op.type == 1:  # immediate 目标
                     starts.add(op.imm)
