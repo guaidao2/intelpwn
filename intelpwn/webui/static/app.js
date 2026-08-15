@@ -185,8 +185,8 @@ function renderOverview(report) {
         else if (d.vuln === "unbounded_write")
           desc = "无界写 → 栈上溢出" + (d.padding != null ? ` padding=${d.padding}` : "");
         else if (d.size_symbolic)
-          desc = `大小符号化 最大=${d.max_possible}` + (d.dangerous ? " 可能溢出" : "");
-        else if (d.dangerous) desc = `大小=${d.size} 超过栈缓冲`;
+          desc = `大小符号化 最大=${d.size_max}` + (d.dangerous ? " 可能溢出" : "");
+        else if (d.dangerous) desc = `大小=${d.size_max} 超过栈缓冲`;
         if (d.discovered_by === "angr") desc += " [angr 主动发现]";
         const tag = (d.dangerous || d.vuln) ? "sev-high" : d.status === "truncated" ? "sev-mid" : "hint";
         return `<div class="kv"><span class="k">${esc(d.callee)}</span><span class="${tag}">${esc(desc)}${d.stack_buf ? " 栈上" : ""}</span></div>`;
