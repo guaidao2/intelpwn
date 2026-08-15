@@ -354,6 +354,10 @@ def print_results(results: dict, binary: str):
             for io_f in angr_res.get("int_overflow", []):
                 print(f"  │  {SEV['中危']} 整数溢出线索: {io_f.get('detail', '')}")
             for d in angr_res.get("discovered", []):
+                if d.get("status") == "truncated":
+                    print(f"  │  {SEV['信息']} [angr 探索截断] {d.get('callee')} @ {d.get('call_addr')}: "
+                          f"{d.get('reason', '符号执行截断, 无法确认')}")
+                    continue
                 tag = SEV['高危']
                 miss = "" if d.get("static_detected") else " (静态漏检)"
                 pad = f", padding~{d['padding']}" if 'padding' in d else ""

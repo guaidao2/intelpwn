@@ -90,10 +90,18 @@ def generate_findings(result: dict) -> dict:
             "exploitable": False,
         })
 
-    # angr 主动发现 (静态漏检的漏洞点)
+    # angr 主动发现 (静态漏检的漏洞点; 探索截断的条目仅作信息提示, 不标高危)
     for d in angr_res.get("discovered", []):
         if d.get("static_detected"):
             continue  # 静态已报过
+        if d.get("status") == "truncated":
+            findings.append({
+                "type": "angr 探索截断",
+                "detail": f"{d.get('callee')} @ {d.get('call_addr')}: {d.get('reason', '符号执行截断')}",
+                "severity": "信息",
+                "exploitable": False,
+            })
+            continue
         pad = f", padding~{d['padding']}" if 'padding' in d else ""
         findings.append({
             "type": "angr 主动发现",

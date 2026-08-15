@@ -162,7 +162,8 @@ def cmd_analyze(args):
     # exploit 生成 (--libc 或 有栈溢出/格式化字符串/angr主动发现时自动生成)
     has_overflow = bool(results.get("overflow"))
     has_fmtstr = bool(results.get("format_string", {}).get("vulnerable"))
-    has_angr = bool(results.get("angr_check", {}).get("discovered"))
+    has_angr = any(d.get("status") != "truncated" and "padding" in d
+                   for d in results.get("angr_check", {}).get("discovered", []))
     if args.libc or ((has_overflow or has_fmtstr or has_angr) and not args.no_exploit):
         libc_path = args.libc
         if libc_path and not os.path.exists(libc_path):
