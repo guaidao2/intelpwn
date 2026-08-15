@@ -156,6 +156,7 @@ async function renderCFG(f) {
     const elements = [];
     for (const n of cfg.nodes) {
       const insns = n.insns.slice(0, 12);
+      const isVuln = marked.has(n.id);
       elements.push({
         data: {
           id: String(n.id),
@@ -164,7 +165,9 @@ async function renderCFG(f) {
           html: insns.slice(0, 6)   // 节点标签只显示前 6 行, 防止节点过高互相重叠
             .map(i => `${i.mnemonic} ${i.op_str}`.trim())
             .map(esc).join("<br>"),
-          vuln: marked.has(n.id),
+          // 注意: 普通块不写 vuln 字段 (cytoscape 的 [vuln] 选择器匹配"字段存在",
+          // 若给普通块写 vuln:false 会导致全部命中红色样式)
+          ...(isVuln ? { vuln: true } : {}),
         },
       });
     }
