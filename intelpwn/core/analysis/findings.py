@@ -129,17 +129,23 @@ def generate_strategy(prot: dict, plt: dict, rop: dict, padding: int) -> list:
     has_execve = 'execve' in plt
     # ret2win
     if not pie and has_system and not canary:
+        if bits == 32:
+            chain = f"padding={padding} → system → /bin/sh (栈传参, 无 gadget 依赖)"
+        else:
+            chain = f"padding={padding} → pop_rdi → /bin/sh → ret → system"
         strategies.append({
             "type": "ret2system",
-            "chain": f"padding={padding} → pop_rdi → /bin/sh → ret → system",
+            "chain": chain,
             "condition": "Canary关闭 + PIE关闭 + system存在",
         })
 
     # ret2libc
     if 'puts' in plt and not canary:
+        chain = f"padding={padding} → puts(puts@got) → main → leak libc → ret2system" + \
+                (" (32位栈传参)" if bits == 32 else "")
         strategies.append({
             "type": "ret2libc (leak → ret2system)",
-            "chain": f"padding={padding} → puts(puts@got) → main → leak libc → ret2system",
+            "chain": chain,
             "condition": "Canary关闭 + puts存在 + libc可用",
         })
 
@@ -151,11 +157,12 @@ def generate_strategy(prot: dict, plt: dict, rop: dict, padding: int) -> list:
             "condition": "NX关闭 + Canary关闭",
         })
 
-    # execve syscall (x86)
-    if rop.get('pop_eax') and rop.get('int_0x80') and not canary:
+    # execve syscall (x86 32 位) — "未找到" 是 truthy 哨兵, 需显式排除
+    if bits == 32 and rop.get('pop_eax') != '未找到' and rop.get('int_0x80') != '未找到' and not canary:
+        syscall_no = "0x0b (11)" if bits == 32 else "59"
         strategies.append({
             "type": "execve syscall (int 0x80)",
-            "chain": f"padding={padding} → pop_eax=59 → pop_ebx=/bin/sh → int_0x80",
+            "chain": f"padding={padding} → pop_eax={syscall_no} → pop_ebx=/bin/sh → int_0x80",
             "condition": "x86 + int 0x80 gadget可用",
         })
 

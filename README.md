@@ -45,8 +45,8 @@
 | 场景 | 模板 | 状态 |
 |---|---|---|
 | **ret2win** (有 win 函数) | `gen_ret2win` | 直接可用 |
-| **ret2system** (`system@plt` + `/bin/sh`) | `gen_ret2system` | 直接可用 |
-| **ret2libc** (leak + ret2system) | `gen_ret2libc` | 有 pop_rdi 时完全自动, 支持 `--remote` |
+| **ret2system** (`system@plt` + `/bin/sh`) | `gen_ret2system` | 64 位需 pop_rdi; **32 位栈传参免 gadget** |
+| **ret2libc** (leak + ret2system) | `gen_ret2libc` | 64 位有 pop_rdi 时自动; **32 位栈传参布局** |
 | **ret2dlresolve** (无 libc) | `gen_ret2dlresolve` | read@plt + 可写 BSS + 非 Full RELRO; **注意 glibc>=2.40 已失效, 模板自动检测并 WARN** |
 | **SROP** (sigreturn) | `gen_srop` | 有 syscall;ret + pop 三件套 + read@plt — **Kali 实测打穿** |
 | **shellcode 注入** (NX 关闭) | `gen_shellcode` | 无 jmp_rsp gadget 时不生成断路径 |
@@ -165,6 +165,7 @@ python3 -m pytest tests/ -v
 | `challenge_ret2dlresolve` | NX, NoCanary, NoPIE | 栈溢出 72 padding | ret2dlresolve (glibc<2.40) |
 | `challenge_tcache` | NX, NoCanary, NoPIE | UAF + tcache poisoning | 手动 exploit (现代 glibc 实测打穿) |
 | `challenge_angr_hidden` | NX, NoCanary, NoPIE | 子函数 strcpy 栈溢出 | angr 主动发现 (静态漏检) |
+| `challenge_x86_vuln` | x86 32 位, NX, NoCanary, NoPIE | gets 栈溢出 52 padding | ret2win (实测打穿) / ret2system (32 位栈传参) |
 | `challenge_rop` | NX, NoCanary | 栈溢出 24 padding | 骨架 + gadget 列表 |
 | `challenge_pie` | NX, PIE, NoCanary | 栈溢出 + PIE | 解析运行时地址 |
 
@@ -195,7 +196,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 ├── intelpwn/webui/static/           前端单页 (app.js/index.html/style.css + cytoscape/dagre)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
-├── challenges/                      12 道 CTF 练习题
+├── challenges/                      13 道 CTF 练习题 (含 1 道 x86 32 位)
 ├── tests/                           48 个单元测试
 ├── schema/intelpwn.schema.json      JSON 输出 schema
 └── install.sh                       依赖安装 (apt + 隔离 venv)

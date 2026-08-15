@@ -26,3 +26,44 @@ class TestAnalyzeOverflow:
     def test_stack_size(self):
         results = analyze_assembly_overflow(BIN)
         assert results[0]["stack_size"] == 64  # 0x40
+
+
+class _I:
+    def __init__(self, addr, mnemonic, op_str):
+        self.address, self.mnemonic, self.op_str = addr, mnemonic, op_str
+
+
+class TestStackBufPassed:
+    """x86 32 位 cdecl 栈参数传递检测"""
+
+    def _f(self, insns, call_idx):
+        from intelpwn.core.analysis.overflow import _stack_buf_passed
+        return _stack_buf_passed(insns, call_idx)
+
+    def test_lea_push_detected(self):
+        """lea eax,[ebp-0x28]; push eax; call gets → 栈链接"""
+        insns = [_I(0, "lea", "eax, [ebp-0x28]"),
+                 _I(1, "push", "eax"),
+                 _I(2, "call", "gets")]
+        assert self._f(insns, 2) is True
+
+    def test_lea_mov_esp_detected(self):
+        """lea eax,[ebp-0x28]; mov [esp],eax; call gets → 栈链接"""
+        insns = [_I(0, "lea", "eax, [ebp-0x28]"),
+                 _I(1, "mov", "[esp], eax"),
+                 _I(2, "call", "gets")]
+        assert self._f(insns, 2) is True
+
+    def test_ebp_plus8_param_not_buffer(self):
+        """lea eax,[ebp+8] 是参数装载, 不是栈缓冲 → 不判链接"""
+        insns = [_I(0, "lea", "eax, [ebp+8]"),
+                 _I(1, "push", "eax"),
+                 _I(2, "call", "gets")]
+        assert self._f(insns, 2) is False
+
+    def test_no_stack_lea(self):
+        """没有 lea [ebp-X] → 不判链接"""
+        insns = [_I(0, "mov", "eax, 0x804a000"),
+                 _I(1, "push", "eax"),
+                 _I(2, "call", "gets")]
+        assert self._f(insns, 2) is False

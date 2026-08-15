@@ -40,6 +40,9 @@ def find_gadgets_capstone(insns, bits) -> dict:
         "pop_rdx": "未找到",
         "ret": "未找到",
         "pop_eax": "未找到",
+        "pop_ebx": "未找到",
+        "pop_ecx": "未找到",
+        "pop_edx": "未找到",
         "int_0x80": "未找到",
         "jmp_rsp": "未找到",
         "syscall": "未找到",
@@ -76,6 +79,24 @@ def find_gadgets_capstone(insns, bits) -> dict:
             if i + 1 < len(insns) and insns[i + 1].mnemonic == 'ret':
                 if result["pop_eax"] == "未找到":
                     result["pop_eax"] = hex(insn.address)
+
+        # pop ebx; ret (x86 — execve 第 1 参)
+        if bits == 32 and mnemo == 'pop' and op_str == 'ebx':
+            if i + 1 < len(insns) and insns[i + 1].mnemonic == 'ret':
+                if result.get("pop_ebx", "未找到") == "未找到":
+                    result["pop_ebx"] = hex(insn.address)
+
+        # pop ecx; ret (x86 — execve 第 2 参)
+        if bits == 32 and mnemo == 'pop' and op_str == 'ecx':
+            if i + 1 < len(insns) and insns[i + 1].mnemonic == 'ret':
+                if result.get("pop_ecx", "未找到") == "未找到":
+                    result["pop_ecx"] = hex(insn.address)
+
+        # pop edx; ret (x86 — execve 第 3 参)
+        if bits == 32 and mnemo == 'pop' and op_str == 'edx':
+            if i + 1 < len(insns) and insns[i + 1].mnemonic == 'ret':
+                if result.get("pop_edx", "未找到") == "未找到":
+                    result["pop_edx"] = hex(insn.address)
 
         # int 0x80 (x86)
         if bits == 32 and mnemo == 'int' and op_str == '0x80':

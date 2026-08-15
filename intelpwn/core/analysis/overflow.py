@@ -98,6 +98,42 @@ def _buf_reg_on_stack(func_insns, call_idx: int, buf_reg: str, window: int = 30)
     return buf_reg in stack_regs
 
 
+def _stack_buf_passed(func_insns, call_idx: int, window: int = 30) -> bool:
+    """x86 32 位 cdecl: 参数在栈上, 无寄存器传参约定.
+
+    检测调用前是否有 lea [ebp-X] 装载栈缓冲 → 经 push reg / mov [esp..], reg
+    写入参数区 (lea eax,[ebp-0x28]; push eax; call gets)。
+    """
+    stack_regs = set()
+    for insn in func_insns[max(0, call_idx - window):call_idx]:
+        m, ops = insn.mnemonic, insn.op_str
+        # 只认 lea [ebp-0x..] 负位移 (栈缓冲); [ebp+8] 是参数装载, 不是缓冲
+        if m == 'lea' and re.search(r'\[ebp\s*-', ops):
+            dst = ops.split(',')[0].strip()
+            if dst.startswith('e') or dst.startswith('r'):
+                stack_regs.add(dst)
+        elif m == 'mov':
+            parts = ops.split(',')
+            if len(parts) == 2:
+                dst, src = parts[0].strip(), parts[1].strip()
+                if src in stack_regs and (dst.startswith('e') or dst.startswith('r')):
+                    stack_regs.add(dst)
+    if not stack_regs:
+        return False
+    # 栈缓冲地址被压栈或写入栈参数区 → 传给目标函数
+    for insn in func_insns[max(0, call_idx - window):call_idx]:
+        m, ops = insn.mnemonic, insn.op_str
+        if m == 'push' and ops.strip() in stack_regs:
+            return True
+        if m == 'mov':
+            parts = ops.split(',')
+            # capstone 输出带尺寸前缀: mov dword ptr [esp], eax — 用正则匹配 [esp
+            if len(parts) == 2 and re.search(r'\[e?s?p', parts[0].strip()) \
+                    and parts[1].strip() in stack_regs:
+                return True
+    return False
+
+
 def _analyze_overflow_from_insns(insns, bits, path) -> list:
     """反汇编结果分析 — 与反汇编解耦"""
     results = []
@@ -202,7 +238,11 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
                                 except ValueError:
                                     pass
                     # 目标必须确实指向栈 (lea rbp-X 经 mov 传播), 否则是堆/全局写, 不是栈溢出
-                    stack_linked = _buf_reg_on_stack(func_insns, idx, buf_reg)
+                    if bits == 32:
+                        # 32 位 cdecl: 参数在栈上, 缓冲地址经压栈传递
+                        stack_linked = _stack_buf_passed(func_insns, idx)
+                    else:
+                        stack_linked = _buf_reg_on_stack(func_insns, idx, buf_reg)
                     if arg_size > 0:
                         truly_dangerous = stack_linked and arg_size > stack_size + 16
                     else:
@@ -213,15 +253,20 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
 
                 elif callee in unbounded_writes:
                     # 无界写: 第一个参数 (rdi/edi) 必须指向栈缓冲
-                    first_reg = 'rdi' if bits == 64 else 'edi'
-                    truly_dangerous = _buf_reg_on_stack(func_insns, idx, first_reg)
+                    if bits == 32:
+                        # 32 位 cdecl: 缓冲地址经 lea [ebp-X] 装载后压栈
+                        truly_dangerous = _stack_buf_passed(func_insns, idx)
+                    else:
+                        truly_dangerous = _buf_reg_on_stack(func_insns, idx, 'rdi')
 
                 elif callee == 'scanf':
                     # 格式串含无宽度 %s → 危险; 否则 (如 %d/%x) 不是溢出源
                     fmt = _resolve_scanf_format(path, window, bits)
                     if fmt and re.search(r'%[0-9]*s', fmt) and not re.search(r'%[0-9]+s', fmt):
-                        first_reg = 'rdi' if bits == 64 else 'edi'
-                        truly_dangerous = _buf_reg_on_stack(func_insns, idx, first_reg)
+                        if bits == 32:
+                            truly_dangerous = _stack_buf_passed(func_insns, idx)
+                        else:
+                            truly_dangerous = _buf_reg_on_stack(func_insns, idx, 'rdi')
 
                 if truly_dangerous:
                     has_danger = True
@@ -248,7 +293,7 @@ def _analyze_overflow_from_insns(insns, bits, path) -> list:
 
 
 def _resolve_scanf_format(path: str, window, bits) -> str:
-    """解析 scanf 的格式串: 查找 lea reg, [rip+disp] / mov reg, imm 指向的 .rodata 字符串"""
+    """解析 scanf 的格式串: 查找 lea reg, [rip+disp] / mov reg, imm / push imm (x86) 指向的 .rodata 字符串"""
     fmt_addr = None
     for prev in window:
         if prev.mnemonic == 'lea' and 'rip' in prev.op_str:
@@ -264,6 +309,19 @@ def _resolve_scanf_format(path: str, window, bits) -> str:
                     break
                 except ValueError:
                     pass
+        elif bits == 32 and prev.mnemonic == 'mov' and re.search(r'\[e?s?p', prev.op_str):
+            # x86 32 位: mov [esp], imm / mov dword ptr [esp], imm (格式串入栈)
+            m = re.search(r'0x([0-9a-fA-F]+)', prev.op_str)
+            if m:
+                fmt_addr = int(m.group(1), 16)
+                break
+        elif bits == 32 and prev.mnemonic == 'push':
+            # x86 32 位: push imm (格式串入栈)
+            try:
+                fmt_addr = int(prev.op_str.strip(), 16)
+                break
+            except ValueError:
+                pass
     if fmt_addr is None:
         return ""
     try:
@@ -276,10 +334,16 @@ def _resolve_scanf_format(path: str, window, bits) -> str:
 
 
 def verify_padding(path: str, static_padding: int) -> dict:
-    """三重验证: 静态 + objdump 反汇编 + cyclic 动态"""
-    arch = "x64"  # fallback, caller should pass arch
+    """三重验证: 静态 + objdump 反汇编 + cyclic 动态 (x64/x86 自适应)"""
     bits = 64
-    n = 8
+    try:
+        with open_elf(path) as elf:
+            if elf.header.e_machine in ('EM_386', 'EM_486'):
+                bits = 32
+    except Exception:
+        pass
+    n = 8 if bits == 64 else 4
+    bp_regs = ('rbp', 'rsp') if bits == 64 else ('ebp', 'esp')
 
     results = {
         "static": static_padding,
@@ -289,17 +353,19 @@ def verify_padding(path: str, static_padding: int) -> dict:
         "confidence": "低",
     }
 
-    # objdump 验证
-    rc, out, _ = run(["objdump", "-d", path])
+    # objdump 验证 (Intel 语法, 否则 GNU 默认 AT&T 与正则不匹配)
+    rc, out, _ = run(["objdump", "-d", "-M", "intel", path])
     if rc == 0:
         lea_matches = re.findall(
-            r'lea\s+(?:rax|eax),\s*\[rbp[^]]*-(0x[0-9a-fA-F]+)\]', out
-        ) or re.findall(
-            r'lea\s+(?:eax),\s*\[ebp[^]]*-(0x[0-9a-fA-F]+)\]', out
+            r'lea\s+rax,\s*\[rbp[^]]*-(0x[0-9a-fA-F]+)\]', out
         )
+        if not lea_matches:
+            lea_matches = re.findall(
+                r'lea\s+eax,\s*\[ebp[^]]*-(0x[0-9a-fA-F]+)\]', out
+            )
         if lea_matches:
             stack_sz = max(int(m, 16) for m in lea_matches)
-            obj_pad = stack_sz + 8 if bits == 64 else stack_sz + 4
+            obj_pad = stack_sz + (8 if bits == 64 else 4)
             results["objdump"] = obj_pad
 
     # 静态 + objdump 一致 → 跳过 GDB (90%+ 情况)
@@ -318,7 +384,7 @@ def verify_padding(path: str, static_padding: int) -> dict:
     gdb_script = f"""set pagination off
 file {path}
 run < {cp}
-info registers rip rsp rbp
+info registers {'rip rsp rbp' if bits == 64 else 'eip esp ebp'}
 quit"""
     sf = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".gdb")
     sf.write(gdb_script)
@@ -333,19 +399,19 @@ quit"""
     for line in out.splitlines():
         parts = line.strip().split()
         if parts and len(parts) >= 2:
-            if parts[0] in ('rbp', 'rsp', 'rip'):
+            if parts[0] in ('rbp', 'rsp', 'rip', 'ebp', 'esp', 'eip'):
                 try:
                     regs[parts[0]] = int(parts[1], 16)
                 except ValueError:
                     pass
 
-    for rname in ('rbp', 'rsp'):
+    for rname in bp_regs:
         if rname in regs:
             val = regs[rname]
             packed = p64(val) if bits == 64 else p32(val)
             offset = cyclic_find(packed[:n], n=n)
             if offset is not None and offset >= 0:
-                pad = offset + n if rname == 'rbp' else offset
+                pad = offset + n if rname in ('rbp', 'ebp') else offset
                 if 8 <= pad <= 4096:
                     results["dynamic"] = pad
                     break

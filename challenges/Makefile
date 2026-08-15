@@ -28,7 +28,8 @@ all: \
 	challenge_srop \
 	challenge_ret2dlresolve \
 	challenge_tcache \
-	challenge_ret2text
+	challenge_ret2text \
+	challenge_x86_vuln
 
 # ── 1. 最简单的 ret2win ──
 challenge_ret2win: challenge_ret2win.c
@@ -82,6 +83,10 @@ challenge_tcache: challenge_tcache.c
 challenge_ret2text: challenge_ret2text.c
 	$(CC) $(CFLAGS) $@ $< $(NOPIE) $(NOCAN) $(NX)
 
+# x86 32 位靶子 (需 gcc-multilib: apt install gcc-multilib)
+challenge_x86_vuln: challenge_x86_vuln.c
+	$(CC) -Wall -m32 -no-pie -fno-stack-protector -z noexecstack -o $@ $<
+
 # ── 测试 ──
 test: all
 	@echo "===== 测试 IntelPwn 分析 ====="
@@ -98,5 +103,5 @@ clean:
 	      challenge_pie challenge_fmtstr_canary \
 	      challenge_angr_hidden challenge_srop \
 	      challenge_ret2dlresolve challenge_tcache \
-	      challenge_ret2text
+	      challenge_ret2text challenge_x86_vuln
 	rm -rf ../reports
