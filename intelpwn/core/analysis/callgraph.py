@@ -90,7 +90,9 @@ def _call_reg_target(op_str, insns, insn_index):
         p_op = (prev.op_str or "").lower()
         # pop: 只 pop 本族 reg 才终止, pop 其他 reg 继续回看
         if prev.mnemonic == "pop":
-            return None if _reg_prefixed(p_op, reg) else None
+            if _reg_prefixed(p_op, reg):
+                return None
+            continue
         if not _reg_prefixed(p_op, reg):
             continue  # 写的是其他寄存器, 不影响本 reg 的常量
         src = p_op.split(",", 1)[1].strip()

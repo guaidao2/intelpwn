@@ -92,7 +92,8 @@ def _reg_prefixed(ops, reg):
     ops = (ops or "").lower()
     if ops.startswith(reg):
         return True
-    w32 = {"rdx": "edx", "rsi": "esi", "rdi": "edi", "rax": "eax", "rcx": "ecx"}
+    w32 = {"rdx": "edx", "rsi": "esi", "rdi": "edi", "rax": "eax", "rcx": "ecx",
+           "rbx": "ebx", "rbp": "ebp", "rsp": "esp"}
     return w32.get(reg) is not None and ops.startswith(w32[reg])
 
 

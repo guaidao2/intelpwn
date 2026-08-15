@@ -211,3 +211,17 @@ def test_reg_indirect_32bit_write_terminates():
     sym = {0x2000: "target", 0x1234: "bogus"}
     g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
     assert g["edges"] == [], "32 位同族清零后旧常量已死"
+
+
+def test_reg_indirect_other_reg_pop_continues():
+    """pop rbx (其他寄存器) 不终止对 rax 的常量回看"""
+    insns = [
+        _FakeInsn(0x1000, "mov", "rax, 0x2000"),
+        _FakeInsn(0x1007, "pop", "rbx"),
+        _FakeInsn(0x1008, "call", "rax"),
+    ]
+    bounds = [(0x1000, 0x1010, "caller")]
+    sym = {0x2000: "target"}
+    g = build_call_graph("x", func_bounds=bounds, sym_map=sym, insns=insns)
+    edge = {(e["source"], e["target"]) for e in g["edges"]}
+    assert (0x1000, 0x2000) in edge, "pop rbx 不应中断 rax 常量解析"
