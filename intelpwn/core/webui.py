@@ -70,36 +70,12 @@ def _func_bounds(path):
         return funcs
 
 
-def _plt_stub_map(elf):
-    """pyelftools 解析 .rela.plt → {stub_addr: name@plt}.
-
-    不依赖 pwntools (其 .plt 填充在无 pkg_resources 的环境失败).
-    x86_64/arm64 .plt 布局: PLT0 16B + 每个 stub 16B; 第 i 条重定位对应第 i+1 个 stub.
-    """
-    smap = {}
-    try:
-        rela = elf.get_section_by_name('.rela.plt')
-        plt_sec = elf.get_section_by_name('.plt')
-        dynsym = elf.get_section_by_name('.dynsym')
-        if not (rela and plt_sec and dynsym):
-            return smap
-        plt_base = plt_sec['sh_addr']
-        plt_end = plt_base + plt_sec['sh_size']
-        for i, reloc in enumerate(rela.iter_relocations()):
-            sym_idx = reloc['r_info_sym']
-            if sym_idx < dynsym.num_symbols():
-                name = dynsym.get_symbol(sym_idx).name
-                if name:
-                    stub = plt_base + 16 * (i + 1)
-                    if stub < plt_end:
-                        smap[stub] = name + "@plt"
-    except Exception:
-        pass
-    return smap
-
-
 def _sym_map_for(path):
-    """符号表 {addr: 函数名} — 按二进制缓存. 含 PLT stub 解析 (symtab 无 read@plt 类条目)"""
+    """符号表 {addr: 函数名} — 按二进制缓存. 含 PLT stub 解析 (symtab 无 read@plt 类条目).
+
+    PLT 解析复用 win_targets._build_plt_map (pyelftools, 支持 .rela.plt/.rel.plt/.plt.sec,
+    跨平台无 pwntools 依赖).
+    """
     with _sym_lock:
         if path in _sym_map_cache:
             return _sym_map_cache[path]
@@ -112,7 +88,10 @@ def _sym_map_for(path):
                     for sym in sec.iter_symbols():
                         if sym.name and sym['st_info']['type'] == 'STT_FUNC':
                             smap[sym['st_value']] = sym.name
-            smap.update(_plt_stub_map(elf))
+            bits = 32 if elf.elfclass == 32 else 64
+        from intelpwn.core.analysis.win_targets import _build_plt_map
+        for stub, name in _build_plt_map(path, bits).items():
+            smap[stub] = name + "@plt"
     except Exception:
         pass
     with _sym_lock:

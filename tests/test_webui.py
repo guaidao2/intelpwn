@@ -85,9 +85,7 @@ class TestWebUI:
 
 
 def test_sym_map_for_plt_resolution():
-    """PLT stub 解析: read@plt 应在 sym_map 中 (symtab 无此条目, 经 pwntools ELF.plt 解析)"""
-    import pytest
-    pytest.importorskip("pwnlib", reason="pwntools 不可用 (Windows 环境)")
+    """PLT stub 解析: read@plt 应在 sym_map 中 (symtab 无此条目, 经 _build_plt_map 解析)"""
     from intelpwn.core.webui import _sym_map_for
     m = _sym_map_for("challenges/challenge_ret2win")
     assert 0x401185 in m and m[0x401185] == "vulnerable"  # symtab 符号仍在
