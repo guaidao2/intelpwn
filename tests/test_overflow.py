@@ -77,14 +77,14 @@ class TestResolveScanf32:
         win = [_I(0, "push", "0x8048470"), _I(1, "call", "scanf")]
         # 0x8048470 超过文件尾 → 返回空或抛错, 不崩即可 (真实 .rodata 解析由 Kali 靶子覆盖)
         r = _resolve_scanf_format("challenges/challenge_x86_vuln", win, 32)
-        assert isinstance(r, str)
+        assert r == ""  # 0x8048470 超文件尾 → 空 (钉住修复: 逗号后锚定)
 
     def test_mov_esp_imm_takes_comma_value(self):
         """mov dword ptr [esp + 0x4], 0x8048470 → 应取 0x8048470 而非 0x4"""
         from intelpwn.core.analysis.overflow import _resolve_scanf_format
         win = [_I(0, "mov", "dword ptr [esp + 0x4], 0x8048470"), _I(1, "call", "scanf")]
         r = _resolve_scanf_format("challenges/challenge_x86_vuln", win, 32)
-        assert isinstance(r, str)  # 不崩; 地址超文件尾返回空是预期的
+        assert r == ""  # 0x8048470 超文件尾 → 空 (钉住修复: 逗号后锚定)  # 不崩; 地址超文件尾返回空是预期的
 
 
 class TestMovEspPrefixed:

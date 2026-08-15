@@ -326,9 +326,19 @@ def _resolve_scanf_format(path: str, window, bits) -> str:
     if fmt_addr is None:
         return ""
     try:
-        with open(path, 'rb') as f:
-            f.seek(fmt_addr)
-            raw = f.read(64)
+        with open_elf(path) as elf:
+            # vaddr → 文件偏移 (非 PIE 下 vaddr ≠ offset, 直接 seek(vaddr) 会越界)
+            off = None
+            for seg in elf.iter_segments():
+                if seg['p_type'] == 'PT_LOAD' and seg['p_vaddr'] <= fmt_addr \
+                        < seg['p_vaddr'] + seg['p_memsz']:
+                    off = seg['p_offset'] + (fmt_addr - seg['p_vaddr'])
+                    break
+            if off is None:
+                return ""
+            with open(path, 'rb') as f:
+                f.seek(off)
+                raw = f.read(64)
         return raw.split(b'\x00')[0].decode(errors='replace')
     except Exception:
         return ""
