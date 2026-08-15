@@ -191,7 +191,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 │   ├── findings.py                  漏洞总结 + 策略生成
 │   └── angr_analysis.py             angr 插件 (主动发现/可达性/padding, 自注册)
 ├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v1.1)
-├── intelpwn/core/exploit.py         exploit 模板生成器
+├── intelpwn/core/exploit.py         exploit 模板生成器 (注册表驱动, 插件可挂模板)
 ├── intelpwn/core/verify.py          定点验证 (cyclic 偏移提取)
 ├── intelpwn/core/cross_validate.py  静态 vs 动态交叉验证 (确认/未复现/动态发现/canary拦截)
 ├── intelpwn/core/webui.py           --web 可视化服务 (总览/反汇编注释/CFG 交互图)
@@ -231,6 +231,10 @@ exploit.py              → 模板自动选择 (ret2win/ret2libc/ret2dlresolve/S
 
 ### 插件机制
 
+一个能力包 = 三个口子, 挂上即通 (核心零改动):
+
+**1. 分析器口子** — 检测结果写入 results, 前端自动展示:
+
 ```python
 # 新建 intelpwn/core/analysis/my_plugin.py
 from . import register_analyzer
@@ -242,6 +246,25 @@ def my_check(path, results):
 ```
 
 `analyze_all` 会在内置流程之后自动执行所有已注册插件, 无需修改编排器。
+
+**2. exploit 模板口子** — 按条件路由, 可覆盖内置模板:
+
+```python
+from intelpwn.core.exploit import register_exploit_template
+
+def predicate(results, libc_path):
+    return results.get("my_check", {}).get("vuln")   # 适用条件
+
+def gen(results, libc_path, host, port):
+    return "# 生成的 exploit 脚本\n"                  # 完整脚本
+
+# priority 越小越先 (内置 10-110, 插件默认 500, 骨架 999); priority=5 可覆盖内置
+register_exploit_template("my_exploit", predicate, gen, priority=5)
+```
+
+**3. 前端兜底渲染** — 分析器输出的任何 key, 未硬编码时自动渲染为"其他发现"折叠卡片 (JSON 结构化, XSS 转义), 无需改 `webui/static/app.js`。
+
+> 能力包示例: 静态链接专项 / 复杂 ROP 组装 / 堆助手等, 均可按此三件套接入。
 
 ### 算法优化
 
