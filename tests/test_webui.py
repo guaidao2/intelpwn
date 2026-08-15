@@ -57,6 +57,15 @@ class TestWebUI:
         funcs = json.loads(body)
         assert funcs, "应有函数列表"
 
+        # 调用图 (全局关系) — 空 results 下只断言结构 + 不依赖结果的标注
+        st, body = _get(port, "/api/callgraph")
+        assert st == 200
+        cg = json.loads(body)
+        assert cg["nodes"] and cg["edges"], "调用图应有节点和边"
+        by_name = {n["name"]: n for n in cg["nodes"]}
+        assert by_name["read@plt"]["danger"], "read@plt 应标为危险调用目标 (PLT 名判定, 不依赖 results)"
+        assert any(n["entry"] for n in cg["nodes"]), "应有入口函数"
+
         # disasm + cfg: 找一个在 .text 里确实有指令的函数 (跳过 _init 等段外符号)
         target = None
         for f in funcs:

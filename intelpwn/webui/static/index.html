@@ -21,6 +21,7 @@
       <button class="tab active" data-tab="overview">总览</button>
       <button class="tab" data-tab="disasm">反汇编</button>
       <button class="tab" data-tab="cfg">CFG 图</button>
+      <button class="tab" data-tab="callgraph">调用图</button>
     </nav>
     <section id="tab-overview" class="tab-panel active"></section>
     <section id="tab-disasm" class="tab-panel">
@@ -39,6 +40,16 @@
       <div id="cfg-wrap">
         <div id="cy"></div>
         <div id="cfg-detail">点击节点查看块内反汇编</div>
+      </div>
+    </section>
+    <section id="tab-callgraph" class="tab-panel">
+      <h2>函数调用图 (全局关系)</h2>
+      <div class="legend">
+        <span class="lg lg-vuln"></span>漏洞函数 <span class="lg lg-danger"></span>危险调用目标 (PLT) <span class="lg lg-entry"></span>入口 <span class="lg lg-path"></span>攻击路径 (粗边)
+      </div>
+      <div id="cfg-wrap">
+        <div id="cy-callgraph"></div>
+        <div id="cfg-detail-callgraph">点击节点查看函数反汇编</div>
       </div>
     </section>
   </main>

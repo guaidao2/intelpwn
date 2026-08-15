@@ -172,6 +172,9 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/cfg/"):
                 with _heavy_sem:
                     self._json(self._api_cfg(_resolve_func_addr(path[len("/api/cfg/"):], self.binary)))
+            elif path == "/api/callgraph":
+                with _heavy_sem:
+                    self._json(self._api_callgraph())
             else:
                 self.send_error(404)
         except (ValueError, IndexError):
@@ -238,6 +241,13 @@ class _Handler(BaseHTTPRequestHandler):
                 ln.setdefault("note", None)
                 ln.setdefault("note_level", None)
         return {"function": func_addr, "lines": lines}
+
+    def _api_callgraph(self):
+        """全二进制函数调用图 (全局关系分析) — 复用缓存的函数边界/符号表"""
+        from intelpwn.core.analysis.callgraph import build_call_graph
+        return build_call_graph(self.binary, results=self.results,
+                                func_bounds=_func_bounds(self.binary),
+                                sym_map=_sym_map_for(self.binary))
 
     def _api_cfg(self, func_addr):
         """函数基本块 CFG, 标记漏洞调用点所在块"""

@@ -342,6 +342,96 @@ async function renderCFG(f) {
   }
 }
 
+/* ── 调用图 (全局关系) ─────────────────────────── */
+let cg = null;
+let cgLoaded = false;
+
+async function renderCallGraph() {
+  const div = document.getElementById("cy-callgraph");
+  div.textContent = "";
+  if (cg) cg.destroy();
+  cg = null;
+  try {
+    const g = await getJSON("/api/callgraph");
+    if (g.error || !g.nodes.length) {
+      div.innerHTML = "<p class='hint'>无调用图数据: " + esc(g.error || "") + "</p>";
+      return;
+    }
+    const elements = [];
+    for (const n of g.nodes) {
+      const tag = n.entry ? "entry" : n.vuln ? "vuln" : n.danger ? "danger" : "norm";
+      elements.push({
+        data: { id: String(n.id), label: n.name,
+                addr: n.addr, tag, onPath: !!n.on_path },
+      });
+    }
+    for (const e of g.edges) {
+      elements.push({ data: { id: `${e.source}->${e.target}`, source: String(e.source), target: String(e.target) } });
+    }
+    cg = cytoscape({
+      container: div,
+      elements,
+      style: [
+        { selector: "node", style: {
+            "background-color": "#1f3a5f", "border-color": "#30363d", "border-width": 1,
+            "color": "#c9d1d9", "font-size": "11px", "label": "data(label)",
+            "width": "label", "height": 26, "shape": "round-rectangle",
+            "text-valign": "center", "padding": "6px",
+          } },
+        { selector: "node[tag = 'vuln']", style: {
+            "background-color": "#f85149", "border-color": "#ff7b72", "border-width": 3,
+            "color": "#ffffff", "font-weight": "bold" } },
+        { selector: "node[tag = 'danger']", style: {
+            "background-color": "#6b5a1e", "border-color": "#d29922", "border-width": 2 } },
+        { selector: "node[tag = 'entry']", style: {
+            "background-color": "#1f6f43", "border-color": "#3fb950", "border-width": 2 } },
+        // 攻击路径: 蓝色粗边框
+        { selector: "node[onPath = 'true']", style: {
+            "border-color": "#58a6ff", "border-width": 2 } },
+        { selector: "node[tag = 'vuln'][onPath = 'true']", style: { "border-width": 4 } },
+        { selector: "edge", style: {
+            "curve-style": "bezier", "target-arrow-shape": "triangle",
+            "line-color": "#30363d", "target-arrow-color": "#30363d", "width": 1 } },
+      ],
+      layout: { name: "dagre", spacingFactor: 1.3, rankDir: "LR" },
+    });
+    // 点节点 → 右侧面板显示该函数反汇编
+    const det = document.getElementById("cfg-detail-callgraph");
+    cg.on("tap", "node", async evt => {
+      const node = evt.target;
+      det.innerHTML = "加载中...";
+      try {
+        const d = await getJSON(`/api/disasm/${node.data("addr")}`);
+        if (d.error) { det.innerHTML = esc(d.error); return; }
+        det.innerHTML = "";
+        const h = document.createElement("div");
+        h.className = "cfg-detail-title";
+        const tagTxt = node.data("tag") === "vuln" ? ' <span style="color:#f85149;font-weight:bold">[漏洞]</span>'
+                     : node.data("tag") === "danger" ? ' <span style="color:#d29922;font-weight:bold">[危险]</span>'
+                     : node.data("tag") === "entry" ? ' <span style="color:#3fb950">[入口]</span>' : "";
+        h.innerHTML = `函数 @ <b>${esc(node.data("label"))}</b>${tagTxt}`;
+        det.appendChild(h);
+        for (const l of d.lines) {
+          const row = document.createElement("div");
+          row.className = "dline" + (l.mark ? " mark" : "");
+          row.innerHTML = `<span class="a">0x${l.addr.toString(16)}</span>` +
+                          `<span class="m">${esc(l.mnemonic)}</span>` +
+                          `<span class="o">${esc(l.op_str)}</span>` +
+                          (l.note ? `<span class="n n-${esc(l.note_level)}">; ${esc(l.note)}</span>` : "");
+          det.appendChild(row);
+        }
+      } catch (e) {
+        det.innerHTML = "加载失败: " + esc(e.message);
+      }
+    });
+    // 自动选中第一个漏洞函数并居中
+    const v = cg.$("node[tag = 'vuln']").first();
+    if (v.length) { v.emit("tap"); cg.center(v); }
+  } catch (e) {
+    div.innerHTML = "<p class='hint'>调用图加载失败: " + esc(e.message) + "</p>";
+  }
+}
+
 /* ── Tab 切换 ─────────────────────────────────────── */
 document.querySelectorAll(".tab").forEach(btn => {
   btn.onclick = () => {
@@ -350,6 +440,8 @@ document.querySelectorAll(".tab").forEach(btn => {
     btn.classList.add("active");
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "cfg" && cy) cy.resize();
+    if (btn.dataset.tab === "callgraph" && !cgLoaded) { cgLoaded = true; renderCallGraph(); }
+    if (btn.dataset.tab === "callgraph" && cg) cg.resize();
   };
 });
 

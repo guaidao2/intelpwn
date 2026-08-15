@@ -74,6 +74,9 @@ pre { white-space: pre-wrap; word-break: break-all; }
 .legend { margin-bottom: 8px; color: var(--dim); font-size: 12px; display: flex; gap: 14px; align-items: center; }
 .lg { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
 .lg-vuln { background: #f85149; border: 1px solid #ff7b72; }
+.lg-danger { background: #6b5a1e; border: 1px solid #d29922; }
+.lg-entry { background: #1f6f43; border: 1px solid #3fb950; }
+.lg-path { background: transparent; border: 2px solid #58a6ff; }
 .lg-lea { background: #6b5a1e; border: 1px solid var(--warn); }
 .lg-call { background: #1f3a5f; border: 1px solid var(--accent); }
 .lg-norm { background: #1f3a5f; border: 1px solid #30363d; }
