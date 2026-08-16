@@ -15,3 +15,17 @@ def test_mini_configd_global_write():
     assert gw, "mini_configd 应有全局写入线索"
     assert any("strcpy" in g.get("call", "") for g in gw), f"应含 strcpy: {gw}"
     assert any("parse_line" in g.get("function", "") for g in gw), f"应在 parse_line: {gw}"
+
+
+def test_global_writes_in_findings():
+    """全局写入进漏洞总结 (中危条目)"""
+    import os
+    b = "challenges/mini_configd"
+    if not os.path.exists(b):
+        return
+    from intelpwn.core.analysis import analyze_all
+    r = analyze_all(b, None)
+    findings = (r.get("summary") or {}).get("items", [])
+    gw = [f for f in findings if f.get("type") == "全局缓冲写入"]
+    assert gw, "漏洞总结应有全局缓冲写入条目"
+    assert gw[0]["severity"] == "中危"

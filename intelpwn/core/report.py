@@ -20,9 +20,9 @@ def _sev_tag(level: str) -> str:
 # report.py 已硬编码渲染的 results key — 兜底区块跳过这些
 _RENDERED_KEYS = {
     "angr_check", "bss_writable", "cross_validation", "file", "format_string",
-    "got", "has_binsh", "heap_analysis", "high_risk_strings", "libc", "overflow",
-    "path", "plt", "protections", "rop", "segment_permissions", "summary",
-    "win_targets", "_shared",
+    "global_writes", "got", "has_binsh", "heap_analysis", "high_risk_strings",
+    "libc", "overflow", "path", "plt", "protections", "rop",
+    "segment_permissions", "summary", "win_targets", "_shared",
 }
 
 
@@ -457,6 +457,16 @@ def print_results(results: dict, binary: str):
     # 9.7 扩展分析输出 (通配 CLI — 插件/未硬编码 key 全显示)
     # ═══════════════════════════════════════════════
     _print_extra_analyzers(results)
+
+    # 9.8 全局缓冲写入 (固件/配置解析类 — 醒目专项, 不埋在扩展输出)
+    gw = results.get("global_writes", [])
+    if gw:
+        print(f"  │")
+        print(f"  ├─ 全局缓冲写入 ─────────────────────────────")
+        for g in gw:
+            print(f"  │  {SEV['中危']} {g.get('call', '?')} @ {g.get('function', '?')}"
+                  f" → 全局段 {g.get('target', '?')} (无界, 槽大小不匹配时溢出)")
+            print(f"  │     {g.get('detail', '')}")
 
     # ═══════════════════════════════════════════════
     # 10. 综合发现

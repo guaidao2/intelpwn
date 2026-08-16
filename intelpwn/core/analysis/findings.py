@@ -42,6 +42,22 @@ def generate_findings(result: dict) -> dict:
         if severity != "高危":
             severity = "高危"
 
+    # 全局缓冲写入 (固件/配置解析类: strcpy 到全局段, 槽不匹配溢出)
+    for g in result.get("global_writes", []):
+        findings.append({
+            "type": "全局缓冲写入",
+            "function": g.get("function", "?"),
+            "call": g.get("call", "?"),
+            "address": g.get("call_addr", ""),
+            "target": g.get("target", ""),
+            "severity": "中危",
+            "exploitable": False,
+            "detail": f"{g.get('call', '?')} 写入全局段 {g.get('target', '?')} "
+                      f"(无界, 槽大小不匹配时溢出覆盖相邻全局)",
+        })
+        if severity != "高危":
+            severity = "中危"
+
     # 保护缺陷
     prot = result.get("protections", {})
     for risk in prot.get("risks", []):
