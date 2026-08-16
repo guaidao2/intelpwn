@@ -30,7 +30,8 @@ all: \
 	challenge_tcache \
 	challenge_ret2text \
 	challenge_x86_vuln \
-	challenge_static_vuln
+	challenge_static_vuln \
+	challenge_tcache_dup
 
 # ── 1. 最简单的 ret2win ──
 challenge_ret2win: challenge_ret2win.c
@@ -91,6 +92,10 @@ challenge_x86_vuln: challenge_x86_vuln.c
 # 静态链接靶子 (静态链接专项; 需 libc6-dev)
 challenge_static_vuln: challenge_static_vuln.c
 	$(CC) -Wall -static -no-pie -fno-stack-protector -z noexecstack -o $@ $<
+
+# ── 堆: tcache poisoning (UAF + 菜单 + safe-linking 泄露) ──
+challenge_tcache_dup: challenge_tcache_dup.c
+	$(CC) -Wall -no-pie -fno-stack-protector -o $@ $<
 
 # ── 测试 ──
 test: all

@@ -52,3 +52,17 @@ def test_analyze_menu_no_menu_challenge():
 def test_analyze_menu_no_overflow():
     r = analyze_menu("challenges/challenge_ret2win", {"overflow": [], "plt": {}})
     assert r["present"] is False
+
+
+def test_analyze_menu_heap_challenge():
+    """堆题 (无溢出) 菜单也识别 — options 表供 gen_tcache_dup 使用 (端到端真实二进制)"""
+    import os
+    b = "challenges/challenge_tcache_dup"
+    if not os.path.exists(b):
+        return  # 二进制未入库的环境跳过 (如 CI 只拉源码)
+    r = analyze_menu(b, {"overflow": [], "plt": {}})
+    assert r["present"] is True
+    assert r["confident"] is False            # 无溢出函数匹配 → 不注入
+    opts = r.get("options") or {}
+    handlers = {info.get("handler") for info in opts.values()}
+    assert {"add", "delete", "show", "edit"} & handlers, f"堆题 handler 未识别: {handlers}"

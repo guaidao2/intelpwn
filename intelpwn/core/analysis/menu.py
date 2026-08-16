@@ -158,16 +158,14 @@ def analyze_menu(path: str, results: dict = None) -> dict:
            "trigger": "", "target_func": "", "numeric": False, "options": {}}
 
     overflow = results.get("overflow") or []
-    if not overflow:
-        return out
-    target_func = overflow[0].get("function") or ""
+    # 菜单识别独立于漏洞类型: 溢出题匹配溢出函数, 堆题 (无 overflow) 也识别 options
+    target_func = (overflow[0].get("function") if overflow else "") or ""
     target_addr = None
-    try:
-        target_addr = int(str(overflow[0].get("address") or ""), 16)
-    except ValueError:
-        pass
-    if not target_func and not target_addr:
-        return out
+    if overflow:
+        try:
+            target_addr = int(str(overflow[0].get("address") or ""), 16)
+        except ValueError:
+            pass
 
     # 黑板基础设施缓存 (analyze_all 物化) — 独立调用时复用共享物化, 不重复手写解析
     shared = results.get("_shared") or {}
@@ -186,6 +184,7 @@ def analyze_menu(path: str, results: dict = None) -> dict:
             insns, bits = bb["insns"], bb["bits"]
             func_bounds = list(bb["func_bounds"])
             sym_by_addr = dict(bb["sym_by_addr"])
+            shared = bb  # 写回: 后续 plt_map 等从 shared 取 (瘦身时漏过 plt_map)
         except Exception as e:
             log.warning("菜单分析反汇编失败 %s: %s", path, e)
             return out
@@ -281,6 +280,10 @@ def analyze_menu(path: str, results: dict = None) -> dict:
                     out["confident"] = True
 
     if not out["confident"]:
+        # 无溢出函数匹配 (堆题等): 菜单结构仍识别 — options 供堆 exploit 模板 (gen_tcache_dup) 使用
+        if options:
+            out["options"] = options
+            out["present"] = True
         return out
 
     # 5) handler 参数结构 (输入序列: scanf/gets/read + 格式串)
