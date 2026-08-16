@@ -239,6 +239,8 @@ exploit.py              → 模板自动选择 (ret2win/ret2libc/ret2dlresolve/S
 
 ### 插件机制
 
+> 想写你的第一个能力包? 见 **[CONTRIBUTING.md](CONTRIBUTING.md)** — 插件三件套完整指南 (分析器注册 / 黑板协议 / exploit 模板 / 测试与提交流程)。
+
 一个能力包 = 三个口子, 挂上即通 (核心零改动):
 
 **1. 分析器口子** — 检测结果写入 results, 前端自动展示:
