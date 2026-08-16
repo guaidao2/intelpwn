@@ -155,7 +155,7 @@ API: `GET /api/functions` `/api/disasm/<addr>` `/api/cfg/<addr>` `/api/report` (
 ### 运行测试
 
 ```bash
-# 单元测试 (188 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
+# 单元测试 (193 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
 python3 -m pytest tests/ -v
 ```
 
@@ -180,6 +180,7 @@ python3 -m pytest tests/ -v
 | `challenge_angr_hidden` | NX, NoCanary, NoPIE | 子函数 strcpy 栈溢出 | angr 主动发现 (静态漏检) |
 | `challenge_x86_vuln` | x86 32 位, NX, NoCanary, NoPIE | gets 栈溢出 52 padding | ret2win (实测打穿) / ret2system (32 位栈传参) |
 | `challenge_static_vuln` | 静态链接, NX, NoCanary, NoPIE | gets 栈溢出 72 padding | static_libc 符号识别 + 静态 ret2system |
+| `mini_configd` | NX, NoCanary, NoPIE | **全局缓冲写入** (key off-by-one: strlen>= 误用, strcpy 溢出到 value) | 真实场景 (模拟固件配置解析) — 全局写入线索 |
 | `challenge_rop` | NX, NoCanary | 栈溢出 24 padding | 骨架 + gadget 列表 |
 | `challenge_pie` | NX, PIE, NoCanary | 栈溢出 + PIE | 解析运行时地址 |
 
@@ -213,7 +214,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
 ├── challenges/                      14 道 CTF 练习题 (含 32 位 + 静态链接)
-├── tests/                           188 个单元测试
+├── tests/                           193 个单元测试
 ├── schema/intelpwn.schema.json      JSON 输出 schema
 └── install.sh                       依赖安装 (apt + 隔离 venv)
 ```
@@ -309,7 +310,7 @@ register_exploit_template("my_exploit", predicate, gen, priority=5)
 | 符号执行验证 | 支持 (angr 插件) | 不支持 | 不支持 | 不支持 |
 | 批量扫描 + JSON | 支持 (--dir + schema) | 不支持 | 不支持 | 不支持 |
 | 中文报告 | 支持 | 不支持 | 不支持 | 不支持 |
-| 单元测试 | 188 用例 | - | - | - |
+| 单元测试 | 193 用例 | - | - | - |
 
 ---
 

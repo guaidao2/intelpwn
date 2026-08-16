@@ -31,7 +31,8 @@ all: \
 	challenge_ret2text \
 	challenge_x86_vuln \
 	challenge_static_vuln \
-	challenge_tcache_dup
+	challenge_tcache_dup \
+	mini_configd
 
 # ── 1. 最简单的 ret2win ──
 challenge_ret2win: challenge_ret2win.c
@@ -115,3 +116,7 @@ clean:
 	      challenge_ret2dlresolve challenge_tcache \
 	      challenge_ret2text challenge_x86_vuln challenge_static_vuln
 	rm -rf ../reports
+
+# ── 真实场景: 模拟固件配置解析模块 (off-by-one: strlen>= 误用, key 溢出到 value) ──
+mini_configd: mini_configd.c
+	$(CC) $(CFLAGS) $@ $< $(NOPIE) $(NOCAN) $(NX)
