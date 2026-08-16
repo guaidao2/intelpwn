@@ -30,6 +30,7 @@
 | **栈缓冲区溢出** | **语义层 v2 (定义-使用链数据流)**: 有界读 (read/fgets/memcpy/strncpy/snprintf) 回溯大小定义链 vs 缓冲栈偏移比较, 无界写 (gets/strcpy/sprintf/strcat) 看目标地址; 破固定窗口, 编译器重排/长链不漏 | 双重判定 + 置信度 |
 | **angr 语义兜底** | 轻量判"未知"时符号执行求值 (节流 3 次/analyze + 500KB 上限防爆) — `--semantic=force` 强制纯 angr | 疑难场景补充 |
 | **scanf 精确判定** | 解析格式串: 仅无宽度 %s 判险, %d/%x 不误报 | 消除旧版无条件误报 |
+| **全局缓冲写入** | strcpy/strcat/sprintf 到可写全局段 (.bss/.data) 的语义链回溯 — 固件/配置解析类 (off-by-one/槽不匹配溢出), 栈检测覆盖不到的补盲 | 真实场景检测面 |
 | **格式化字符串** | 静态 + 黑盒, 合并 4 批加速; **无 printf 族直接排除 (防菜单回显误判)** | 偏移自动定位 |
 | **安全保护** | Canary / NX / PIE / RELRO / RWX 段 / 静态链接 | 带风险评级 |
 | **PLT 危险函数** | 自动标注 system/execve/gets/printf 等 | 用途分类 |
