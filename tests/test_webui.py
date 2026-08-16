@@ -23,7 +23,7 @@ def _start_server(results, port=5099):
         try:
             s = socket.create_connection(("127.0.0.1", port), timeout=0.2)
             s.close()
-            return
+            return t
         except OSError:
             time.sleep(0.1)
     raise AssertionError("服务未启动")
@@ -160,3 +160,35 @@ def test_stripped_e2e_functions_disasm_cfg():
             assert not c.get("error"), f"{f['name']} cfg: {c.get('error')}"
     finally:
         webui._func_bounds = orig
+
+
+def test_shutdown_endpoint_stops_server():
+    """/api/shutdown 一键停止 (Ctrl-C 失效兜底): GET 后服务退出, 端口关闭"""
+    import http.client
+    results = {"overflow": [], "path": BIN}
+    port = 5103
+    t = _start_server(results, port)
+    # 服务就绪
+    for _ in range(50):
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            c.request("GET", "/api/report"); r = c.getresponse(); c.close()
+            assert r.status == 200
+            break
+        except OSError:
+            time.sleep(0.2)
+    # 触发 shutdown
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    c.request("GET", "/api/shutdown"); r = c.getresponse()
+    body = r.read(); c.close()
+    assert r.status == 200 and b"ok" in body
+    # 服务应退出 (serve 线程结束)
+    t.join(timeout=6)
+    assert not t.is_alive(), "shutdown 后 serve 线程未退出"
+    # 端口应关闭
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+        c.request("GET", "/api/report")
+        assert False, "服务应已停止"
+    except OSError:
+        pass

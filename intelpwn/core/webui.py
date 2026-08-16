@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import signal
 import sys
 import threading
 import webbrowser
@@ -204,6 +205,10 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/callgraph":
                 with _heavy_sem:
                     self._json(self._api_callgraph())
+            elif path == "/api/shutdown":
+                # 浏览器一键停止 (Ctrl-C 失效场景的兜底出口)
+                self._json({"ok": True, "note": "服务正在停止"})
+                threading.Thread(target=_shutdown_server, daemon=True).start()
             else:
                 self.send_error(404)
         except (ValueError, IndexError):
@@ -368,6 +373,25 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+_ACTIVE_HTTPD = None
+_ACTIVE_HTTPD_LOCK = threading.Lock()
+
+
+def _shutdown_server():
+    """停止正在运行的 HTTP 服务 (由 /api/shutdown 触发; Ctrl-C 失效时的兜底出口)"""
+    with _ACTIVE_HTTPD_LOCK:
+        httpd = _ACTIVE_HTTPD
+    if httpd:
+        try:
+            httpd.block_on_close = False
+            httpd.shutdown()
+            httpd.server_close()
+        except Exception:
+            pass
+        print("\n[+] 服务已停止 (通过 /api/shutdown)")
+    # daemon handler 线程随进程退出, 主线程随后返回
+
+
 def _pick_port(preferred: int, max_tries: int = 20):
     """端口选择: 显式指定则严格使用; 否则从 preferred 起递增找空闲"""
     import socket
@@ -412,7 +436,19 @@ def serve(results: dict, binary: str, host: str = "0.0.0.0",
     if host not in ("127.0.0.1", "localhost", "::1"):
         print(f"    [注意] 监听 {host}: 局域网内其他主机可访问该分析页面, "
               f"敌对网络请用 --web-host 127.0.0.1 锁定")
-    print("    按 Ctrl-C 停止服务")
+    print("    退出: Ctrl-C / 浏览器访问 /api/shutdown / kill <pid>")
+    global _ACTIVE_HTTPD
+    with _ACTIVE_HTTPD_LOCK:
+        _ACTIVE_HTTPD = httpd
+    # SIGTERM 优雅退出 (kill <pid> / pkill 场景)
+    def _on_sigterm(signum, frame):
+        print("\n[+] 收到 SIGTERM, 服务已停止")
+        httpd.block_on_close = False
+        threading.Thread(target=_shutdown_server, daemon=True).start()
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        pass  # 非主线程等无法注册信号的场景忽略
     if open_browser:
         try:
             webbrowser.open(f"http://127.0.0.1:{final_port}/")
