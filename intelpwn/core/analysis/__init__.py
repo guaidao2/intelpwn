@@ -193,6 +193,23 @@ def analyze_all(path: str, libc_path: str = None, semantic_mode: str = "throttle
 
     result["heap_analysis"] = detect_heap(path, libc_path)
 
+    # 跨函数 UAF 启发 (菜单/选项粒度: 哪个选项 free, 哪个选项 use — 语义层数组基址关联)
+    # 仅堆题启用 (非堆二进制无 free, 全 .text 扫描白费)
+    if (result.get("heap_analysis") or {}).get("has_heap"):
+        try:
+            from intelpwn.core.analysis.heap_uaf import detect_cross_function_uaf
+            uaf = detect_cross_function_uaf(path, insns=shared_insns, bits=shared_bits,
+                                            func_bounds=_shared.get("func_bounds"),
+                                            plt_map=_shared.get("plt_map"))
+            if uaf:
+                for ch in uaf:
+                    ch["type"] = "use_after_free"
+                result["heap_analysis"]["uaf_chains"] = uaf
+                result["heap_analysis"]["clues"].append(
+                    {"type": "use_after_free", "detail": f"{len(uaf)} 条跨函数 UAF 链"})
+        except Exception:
+            pass
+
     result["high_risk_strings"] = scan_high_risk_strings(path)
 
     result["segment_permissions"] = analyze_segments(path)
@@ -227,6 +244,31 @@ def analyze_all(path: str, libc_path: str = None, semantic_mode: str = "throttle
     if extra:
         print_info(f"执行扩展分析器: {', '.join(extra)}")
         run_extra_analyzers(path, result)
+
+    # 跨函数 UAF 选项号标注 — menu 扩展分析器此时已跑, 补 handler 地址→选项映射
+    try:
+        uaf = (result.get("heap_analysis") or {}).get("uaf_chains")
+        if uaf:
+            menu_opts = (result.get("menu") or {}).get("options") or {}
+            opt_ranges = []
+            for no, info in menu_opts.items():
+                try:
+                    if info.get("address"):
+                        start = int(info["address"], 16)
+                        opt_ranges.append((start, start + 0x100, no))
+                except (ValueError, TypeError):
+                    pass
+            def _opt_for(addr):
+                a = int(addr, 16)
+                for s, e, no in opt_ranges:
+                    if s <= a < e:
+                        return no
+                return "?"
+            for ch in uaf:
+                ch["free_option"] = _opt_for(ch["free_addr"])
+                ch["use_option"] = _opt_for(ch["use_addr"])
+    except Exception:
+        pass
 
     print_info("生成综合漏洞评估...")
     result["summary"] = generate_findings(result)

@@ -173,7 +173,8 @@ function renderOverview(report) {
       <div class="kv"><span class="k">safe-linking</span><span>${gv.safe_linking ? '开启 (需 heap 泄露)' : '关闭'}</span></div>
       <div class="kv"><span class="k">__free_hook</span><span>${gv.free_hook ? '可用' : '已移除'}</span></div>
       <div class="kv"><span class="k">攻击面</span><span>${esc(gv["攻击面"] || "?")}</span></div>` : ""}
-      ${(heap.clues || []).map(c => `<div class="kv"><span class="${c.severity === '高危' || c.severity === '严重' ? 'sev-high' : 'sev-mid'}">${esc(c.severity)}</span><span>${esc(c.detail)}</span></div>`).join("")}`);
+      ${(heap.clues || []).map(c => `<div class="kv"><span class="${c.severity === '高危' || c.severity === '严重' ? 'sev-high' : 'sev-mid'}">${esc(c.severity)}</span><span>${esc(c.detail)}</span></div>`).join("")}
+      ${(heap.uaf_chains || []).map(u => `<div class="kv"><span class="sev-high">UAF</span><span>选项 ${esc(u.free_option)} (free@${esc(u.free_addr)}) → 选项 ${esc(u.use_option)} (${esc(u.use_callee)}@${esc(u.use_addr)}) 同一对象数组 ${esc(u.array_base)}</span></div>`).join("")}`);
   }
 
   // angr 符号执行
