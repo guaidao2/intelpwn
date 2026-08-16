@@ -127,3 +127,26 @@ class TestParseGdbCrash:
         assert r["crash"] is True
         assert r["canary_hit"] is True
         assert r["cyclic_offset"] is None
+
+
+def test_heap_uaf_cross_validate_confirm():
+    """堆 UAF 交叉验证: 静态链 + 动态泄露复现 → 确认"""
+    from intelpwn.core.cross_validate import cross_validate
+    results = {"heap_analysis": {"has_heap": True, "uaf_chains": [
+        {"free_option": "2", "use_option": "3", "free_addr": "0x13e0",
+         "use_addr": "0x1467", "use_callee": "puts", "array_base": "0x4060"}]}}
+    dynamic = {"heap": {"uaf_repro": True, "exploit_ok": False, "note": ""}}
+    cv = cross_validate(results, dynamic)
+    he = [e for e in cv["entries"] if e["item"] == "堆 UAF"]
+    assert he and he[0]["state"] == "泄露确认", f"应泄露确认: {he}"
+
+
+def test_heap_uaf_cross_validate_unreproduced():
+    """堆 UAF 交叉验证: 静态链 + 动态未复现 → 未复现"""
+    from intelpwn.core.cross_validate import cross_validate
+    results = {"heap_analysis": {"has_heap": True, "uaf_chains": [
+        {"free_option": "2", "use_option": "3"}]}}
+    dynamic = {"heap": {"uaf_repro": False, "note": "脚本超时"}}
+    cv = cross_validate(results, dynamic)
+    he = [e for e in cv["entries"] if e["item"] == "堆 UAF"]
+    assert he and he[0]["state"] == "未复现", f"应未复现: {he}"

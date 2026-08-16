@@ -6,6 +6,7 @@
 
 import re
 import subprocess
+import sys
 import tempfile
 import os
 from typing import Optional
@@ -109,6 +110,39 @@ quit"""
     return _parse_gdb_crash(out, rc, bits)
 
 
+def verify_heap_dynamic(binary: str, results: dict) -> dict:
+    """堆题动态验证: 临时生成 tcache 原语脚本 (INTELPWN_VERIFY 自动模式) → 跑.
+
+    双信号判定:
+      LEAK: True — UAF 泄露成功 (freed chunk 数据读出 = 漏洞复现)
+      PWN:  True — 完整打穿 (uid/root 输出)
+    """
+    out = {"uaf_repro": None, "exploit_ok": None, "note": ""}
+    if not (results.get("heap_analysis") or {}).get("has_heap"):
+        return out
+    try:
+        from intelpwn.core.exploit import gen_tcache_dup
+        script = gen_tcache_dup(results, None)
+        if not script or "骨架" in script:
+            out["note"] = "堆题但无 tcache 原语 (缺菜单四件套)"
+            return out
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
+            f.write(script)
+            tmp = f.name
+        env = dict(os.environ, INTELPWN_VERIFY="1")
+        r = subprocess.run([sys.executable, tmp], capture_output=True, timeout=20, env=env)
+        outp = r.stdout.decode(errors='replace') + r.stderr.decode(errors='replace')
+        out["uaf_repro"] = "LEAK: True" in outp or "chunk>>12: 0x" in outp and "0x0" not in outp.split("chunk>>12:")[1][:6]
+        out["exploit_ok"] = "PWN: True" in outp or "uid=" in outp
+        out["note"] = "UAF 泄露复现" if out["uaf_repro"] else "未复现 (可能是 glibc>=2.34 经典路径阻断)"
+        os.unlink(tmp)
+    except subprocess.TimeoutExpired:
+        out["note"] = "脚本超时"
+    except Exception as e:
+        out["note"] = f"验证异常: {e}"
+    return out
+
+
 def verify_dynamic(binary: str, results: dict) -> dict:
     """动态验证 (不重复 analyze_all, 直接消费已计算的 results)
 
@@ -160,5 +194,19 @@ def verify_dynamic(binary: str, results: dict) -> dict:
                     break
             except Exception:
                 pass
+
+    # 4. 堆题动态验证: UAF 泄露复现 + exploit 打穿 (tcache 原语自动模式)
+    if (results.get("heap_analysis") or {}).get("has_heap"):
+        print_info("堆题动态验证 (UAF 泄露 + tcache 原语)...")
+        hv = verify_heap_dynamic(binary, results)
+        out["heap"] = hv
+        if hv.get("uaf_repro"):
+            print_success("  UAF 泄露复现 (freed chunk 数据读出)")
+        elif hv.get("note"):
+            print_warning(f"  {hv['note']}")
+        if hv.get("exploit_ok"):
+            print_success("  原语打穿 (uid/root)")
+        elif not hv.get("uaf_repro"):
+            print_warning("  未打穿 (glibc>=2.34 经典路径可能被阻断)")
 
     return out

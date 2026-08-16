@@ -37,7 +37,7 @@
 | **x86 32 位支持** | cdecl 栈传参检测 (lea [ebp-X] → push/mov[esp]), scanf %s 格式串 vaddr→offset 映射, 三重 padding 验证自适应 (eip/esp/ebp + p32) | 全链路覆盖 |
 | **静态链接专项** | libc 内置符号识别 (system/execve/binsh 固定地址), 危险函数符号表 fallback (静态链接无 PLT 也能识别 gets/read), fmtstr 无 GOT 覆写返回地址路径 | 能力包 |
 | **复杂 ROP 组装** | ret2csu (__libc_csu_init) 识别 + x86 pop;pop;ret 多参链 | 链可行性分析 |
-| **堆助手** | glibc 版本识别 (**支持 --libc 附件判定**) + tcache/safe-linking/__free_hook 行为表 (按版本给攻击面) + **tcache poisoning 版本感知原语** (GOT→system 完整路径 / 2.34+ 现代路径标注) | 独立模块 |
+| **堆助手** | glibc 版本识别 (**支持 --libc 附件判定**) + tcache/safe-linking/__free_hook 行为表 (按版本给攻击面) + **tcache poisoning 版本感知原语** (GOT→system 完整路径 / 2.34+ 现代路径标注) + **跨函数 UAF 链检测** (选项粒度: free→use 同对象数组) + **动态验证** (--verify 泄露复现/打穿判定) | 独立模块 |
 | **BSS 可写区** | ELF 符号表扫描大尺寸 BSS 符号 | 用于 shellcode 存储 |
 | **CFG 复杂度** | 指令流直接计数边和节点 (去 NetworkX) | 5ms vs 500ms |
 | **堆漏洞线索** | 同函数多 free (double-free) / malloc 大小算术运算 (整数溢出) / 循环内 free (UAF 场景) | 启发式提示 |
@@ -123,7 +123,7 @@ python3 intelpwn.py analyze <binary> --json
 # 批量扫描目录下所有 ELF
 python3 intelpwn.py analyze --dir <目录> [--json]
 
-# 定点验证 = analyze --verify (静态 + 动态 + 交叉验证)
+# 定点验证 = analyze --verify (静态 + 动态 + 交叉验证; 含堆题 UAF 泄露复现/原语打穿判定)
 python3 intelpwn.py verify <binary>
 
 # 抑制 exploit 自动生成
@@ -155,7 +155,7 @@ API: `GET /api/functions` `/api/disasm/<addr>` `/api/cfg/<addr>` `/api/report` (
 ### 运行测试
 
 ```bash
-# 单元测试 (177 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
+# 单元测试 (188 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
 python3 -m pytest tests/ -v
 ```
 
@@ -207,13 +207,13 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 ├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v2.0)
 ├── intelpwn/core/exploit.py         exploit 模板生成器 (注册表驱动, 插件可挂模板)
 ├── intelpwn/core/verify.py          定点验证 (cyclic 偏移提取)
-├── intelpwn/core/cross_validate.py  静态 vs 动态交叉验证 (确认/未复现/动态发现/canary拦截)
+├── intelpwn/core/cross_validate.py  静态 vs 动态交叉验证 (确认/未复现/动态发现/canary拦截/堆UAF)
 ├── intelpwn/core/webui.py           --web 可视化服务 (总览/反汇编注释/CFG 交互图)
 ├── intelpwn/webui/static/           前端单页 (app.js/index.html/style.css + cytoscape/dagre)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
 ├── challenges/                      14 道 CTF 练习题 (含 32 位 + 静态链接)
-├── tests/                           177 个单元测试
+├── tests/                           188 个单元测试
 ├── schema/intelpwn.schema.json      JSON 输出 schema
 └── install.sh                       依赖安装 (apt + 隔离 venv)
 ```
@@ -309,7 +309,7 @@ register_exploit_template("my_exploit", predicate, gen, priority=5)
 | 符号执行验证 | 支持 (angr 插件) | 不支持 | 不支持 | 不支持 |
 | 批量扫描 + JSON | 支持 (--dir + schema) | 不支持 | 不支持 | 不支持 |
 | 中文报告 | 支持 | 不支持 | 不支持 | 不支持 |
-| 单元测试 | 177 用例 | - | - | - |
+| 单元测试 | 188 用例 | - | - | - |
 
 ---
 

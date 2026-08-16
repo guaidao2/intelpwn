@@ -98,6 +98,29 @@ def cross_validate(results: dict, dynamic: dict) -> dict:
             "state": "动态发现",
         })
 
+    # ── 5. 堆 UAF (跨函数链) ──
+    uaf_chains = (results.get("heap_analysis") or {}).get("uaf_chains")
+    heap_dyn = (dynamic or {}).get("heap")
+    if uaf_chains:
+        uaf_desc = f"{len(uaf_chains)} 条链 (选项 {uaf_chains[0].get('free_option', '?')}→{uaf_chains[0].get('use_option', '?')})"
+        if not dynamic:
+            entries.append({"item": "堆 UAF", "static": uaf_desc,
+                            "dynamic": "动态跳过", "state": "跳过"})
+        elif heap_dyn and heap_dyn.get("uaf_repro"):
+            entries.append({"item": "堆 UAF", "static": uaf_desc,
+                            "dynamic": "泄露复现",
+                            "state": "确认" if heap_dyn.get("exploit_ok") else "泄露确认",
+                            "note": None if heap_dyn.get("exploit_ok")
+                            else "UAF 复现但未完整打穿 (glibc>=2.34 经典路径可能阻断)"})
+        elif heap_dyn and heap_dyn.get("note"):
+            entries.append({"item": "堆 UAF", "static": uaf_desc,
+                            "dynamic": "未复现", "state": "未复现",
+                            "note": heap_dyn.get("note")})
+        else:
+            entries.append({"item": "堆 UAF", "static": uaf_desc,
+                            "dynamic": "未复现", "state": "未复现",
+                            "note": "动态验证未确认 UAF (可能需老 glibc 环境)"})
+
     # ── 结论 ──
     states = [e["state"] for e in entries]
     if "动态发现" in states:
