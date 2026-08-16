@@ -13,8 +13,6 @@
 import logging
 import re
 
-from capstone import Cs, CS_ARCH_X86, CS_MODE_64, CS_MODE_32
-
 from intelpwn.utils.binary import open_elf
 from . import register_analyzer
 
@@ -171,7 +169,7 @@ def analyze_menu(path: str, results: dict = None) -> dict:
     if not target_func and not target_addr:
         return out
 
-    # 黑板基础设施缓存 (analyze_all 物化, 避免重复 open_elf/capstone) — 独立调用时回退自扫
+    # 黑板基础设施缓存 (analyze_all 物化) — 独立调用时复用共享物化, 不重复手写解析
     shared = results.get("_shared") or {}
     insns = shared.get("insns")
     bits = shared.get("bits")
@@ -179,25 +177,15 @@ def analyze_menu(path: str, results: dict = None) -> dict:
     sym_by_addr = dict(shared.get("sym_by_addr") or {})
     if insns is None or not func_bounds:
         try:
-            with open_elf(path) as elf:
-                e_machine = elf.header.e_machine
-                bits = 64 if e_machine == 'EM_X86_64' else (32 if e_machine in ('EM_386', 'EM_486') else 0)
-                if not bits:
-                    return out
-                md = Cs(CS_ARCH_X86, CS_MODE_64 if bits == 64 else CS_MODE_32)
-                md.detail = True
-                text = elf.get_section_by_name('.text')
-                if not text:
-                    return out
-                insns = list(md.disasm(text.data(), text['sh_addr']))
-                for sec_name in ('.symtab', '.dynsym'):
-                    sec = elf.get_section_by_name(sec_name)
-                    if not sec:
-                        continue
-                    for sym in sec.iter_symbols():
-                        if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
-                            func_bounds.append((sym['st_value'], sym['st_value'] + sym['st_size'], sym.name))
-                            sym_by_addr.setdefault(sym['st_value'], sym.name)
+            from . import _build_shared_blackboard
+            from .overflow import disassemble_text
+            pre = disassemble_text(path)
+            if not pre:
+                return out
+            bb = _build_shared_blackboard(path, pre[0], pre[1])
+            insns, bits = bb["insns"], bb["bits"]
+            func_bounds = list(bb["func_bounds"])
+            sym_by_addr = dict(bb["sym_by_addr"])
         except Exception as e:
             log.warning("菜单分析反汇编失败 %s: %s", path, e)
             return out
