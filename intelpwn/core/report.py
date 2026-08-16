@@ -453,12 +453,7 @@ def print_results(results: dict, binary: str):
                   + (f" ({note})" if note else ""))
         print(f"  │  结论: {cross.get('verdict')}")
 
-    # ═══════════════════════════════════════════════
-    # 9.7 扩展分析输出 (通配 CLI — 插件/未硬编码 key 全显示)
-    # ═══════════════════════════════════════════════
-    _print_extra_analyzers(results)
-
-    # 9.8 全局缓冲写入 (固件/配置解析类 — 醒目专项, 不埋在扩展输出)
+    # 9.7 全局缓冲写入 (固件/配置解析类 — 内置分析专项, 在扩展输出之前)
     gw = results.get("global_writes", [])
     if gw:
         print(f"  │")
@@ -467,6 +462,11 @@ def print_results(results: dict, binary: str):
             print(f"  │  {SEV['中危']} {g.get('call', '?')} @ {g.get('function', '?')}"
                   f" → 全局段 {g.get('target', '?')} (无界, 槽大小不匹配时溢出)")
             print(f"  │     {g.get('detail', '')}")
+
+    # ═══════════════════════════════════════════════
+    # 9.8 扩展分析输出 (通配 CLI — 插件/未硬编码 key 全显示)
+    # ═══════════════════════════════════════════════
+    _print_extra_analyzers(results)
 
     # ═══════════════════════════════════════════════
     # 10. 综合发现

@@ -177,6 +177,13 @@ function renderOverview(report) {
       ${(heap.uaf_chains || []).map(u => `<div class="kv"><span class="sev-high">UAF</span><span>选项 ${esc(u.free_option)} (free@${esc(u.free_addr)}) → 选项 ${esc(u.use_option)} (${esc(u.use_callee)}@${esc(u.use_addr)}) 同一对象数组 ${esc(u.array_base)}</span></div>`).join("")}`);
   }
 
+  // 全局缓冲写入 (固件/配置解析类: strcpy 到全局段, 槽不匹配溢出)
+  const gw = report.global_writes || [];
+  if (gw.length) {
+    addCard("全局缓冲写入", `
+      ${gw.map(g => `<div class="kv"><span class="sev-mid">中危</span><span>${esc(g.call)} @ ${esc(g.function)} → 全局段 ${esc(g.target)} (无界, 槽大小不匹配时溢出覆盖相邻全局)</span></div>`).join("")}`);
+  }
+
   // angr 符号执行
   const angr = report.angr_check || {};
   if (angr && Object.keys(angr).length) {
@@ -221,7 +228,7 @@ function renderOverview(report) {
   // 兜底: 未硬编码渲染的 key → 通用折叠卡片 (插件分析器输出即所见, 不再改前端)
   const KNOWN_KEYS = new Set(["protections", "overflow", "format_string", "got", "rop",
     "bss_writable", "has_binsh", "heap_analysis", "angr_check", "win_targets",
-    "cross_validation", "summary", "path", "bits", "plt", "static_libc"]);
+    "cross_validation", "summary", "path", "bits", "plt", "static_libc", "global_writes"]);
   const extraKeys = Object.keys(report).filter(k => !KNOWN_KEYS.has(k));
   for (const k of extraKeys) {
     const body = `<details><summary>原始数据 (插件输出)</summary>` +
