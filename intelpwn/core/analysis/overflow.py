@@ -207,6 +207,111 @@ def _size_value(func_insns, call_idx: int, size_reg: str, limit: int = _BACKTRAC
     return None
 
 
+def _buf_global_target(func_insns, call_idx, buf_reg, path=None, limit: int = 60):
+    """回溯 buf_reg 定义链 → 可写全局段 (.bss/.data) 地址 or None.
+
+    固件/配置解析类: strcpy 到全局数组 (槽大小不匹配 → 溢出覆盖相邻全局).
+    """
+    target = _reg_family(buf_reg)
+    for k in range(call_idx - 1, max(-1, call_idx - limit - 1), -1):
+        insn = func_insns[k]
+        m, ops = insn.mnemonic, insn.op_str
+        if m in ('call', 'jmp', 'ret'):
+            break
+        if m in ('lea', 'mov'):
+            rm = re.search(r'\[rip\s*([+-])\s*(0x[0-9a-fA-F]+)\]', ops)
+            if rm:
+                dst = ops.split(',')[0].strip()
+                if _reg_family(dst) == target:
+                    disp = int(rm.group(2), 16)
+                    addr = insn.address + insn.size + (disp if rm.group(1) == '+' else -disp)
+                    if _in_writable_segment(path, addr):
+                        return addr
+            parts = ops.split(',')
+            if m == 'mov' and len(parts) == 2:
+                dst, src = parts[0].strip(), parts[1].strip()
+                if _reg_family(dst) == target and re.match(r'^[er]?[a-ds]?x?[0-9]*$', src):
+                    target = _reg_family(src)
+    return None
+
+
+def _in_writable_segment(path, addr) -> bool:
+    """地址是否落在可写段 (.bss/.data 等 SHF_WRITE=1)"""
+    try:
+        with open_elf(path) as elf:
+            for sec in elf.iter_sections():
+                if sec['sh_addr'] <= addr < sec['sh_addr'] + sec['sh_size']:
+                    return bool(sec['sh_flags'] & 1)  # SHF_WRITE
+    except Exception:
+        pass
+    return False
+
+
+def _writable_ranges(path):
+    """预计算可写段范围 [(start, end), ...] — detect_global_writes 一次计算复用"""
+    ranges = []
+    try:
+        with open_elf(path) as elf:
+            for sec in elf.iter_sections():
+                if sec['sh_flags'] & 1 and sec['sh_size'] > 0:
+                    ranges.append((sec['sh_addr'], sec['sh_addr'] + sec['sh_size']))
+    except Exception:
+        pass
+    return ranges
+
+
+def detect_global_writes(path: str, insns=None, bits=None, func_bounds=None,
+                         plt_map=None) -> list:
+    """全局缓冲写入线索: strcpy/strcat/sprintf 到可写全局段 (潜在溢出).
+
+    固件/配置解析 daemon 常见: 输入长度检查与全局槽大小不匹配 → strcpy 溢出
+    覆盖相邻全局。栈溢出检测覆盖不到 (目标非栈), 这里补检测面。
+    """
+    if insns is None or bits is None:
+        pre = disassemble_text(path)
+        if not pre:
+            return []
+        insns, bits = pre[0], pre[1]
+    if not plt_map:
+        try:
+            from intelpwn.core.analysis.win_targets import _build_plt_map
+            plt_map = _build_plt_map(path, bits)
+        except Exception:
+            plt_map = {}
+    if not plt_map:
+        try:
+            from pwn import ELF
+            pwn_elf = ELF(path, checksec=False)
+            plt_map = {v: k for k, v in pwn_elf.plt.items()}
+        except Exception:
+            pass
+    if not func_bounds:
+        func_bounds = [(insns[0].address, insns[-1].address + 1, "sub_%x" % insns[0].address)]
+
+    hits = []
+    writable = _writable_ranges(path)  # 预计算一次, 避免每调用点重开 ELF
+    for f_start, f_end, f_name in func_bounds:
+        f_insns = [i for i in insns if f_start <= i.address < f_end]
+        for idx, insn in enumerate(f_insns):
+            if insn.mnemonic != 'call':
+                continue
+            try:
+                tgt = int(insn.op_str.strip(), 16)
+            except ValueError:
+                continue
+            callee = plt_map.get(tgt) or plt_map.get(tgt - 4) or plt_map.get(tgt + 4)
+            if callee not in ('strcpy', 'strcat', 'sprintf'):
+                continue
+            g_addr = _buf_global_target(f_insns, idx, 'rdi', path)
+            if g_addr and any(s <= g_addr < e for s, e in writable):
+                hits.append({
+                    "function": f_name, "call": callee,
+                    "call_addr": hex(insn.address), "target": hex(g_addr),
+                    "detail": f"{callee} 写入全局段 {hex(g_addr)} (无界, 槽大小不匹配时溢出)",
+                })
+    return hits
+
+
 def _buf_reg_on_stack(func_insns, call_idx: int, buf_reg: str, window: int = 30) -> bool:
     """近似数据流: 调用前 window 条指令内, buf_reg 是否被 lea [rbp-X] 赋值。
 
@@ -418,6 +523,7 @@ def _analyze_overflow_from_insns(insns, bits, path, func_bounds=None, plt_map=No
 
                 elif callee in unbounded_writes:
                     # 无界写: 第一个参数 (rdi/edi) 必须指向栈缓冲
+                    # (全局缓冲写入由 detect_global_writes 独立检测, 不污染栈溢出结果)
                     if bits == 32:
                         truly_dangerous = _stack_buf_passed(func_insns, idx)
                     else:

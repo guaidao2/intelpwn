@@ -212,6 +212,15 @@ def analyze_all(path: str, libc_path: str = None, semantic_mode: str = "throttle
 
     result["high_risk_strings"] = scan_high_risk_strings(path)
 
+    # 全局缓冲写入线索 (固件/配置解析类: strcpy 到全局数组, 栈溢出检测覆盖不到)
+    try:
+        from intelpwn.core.analysis.overflow import detect_global_writes
+        result["global_writes"] = detect_global_writes(path, insns=shared_insns, bits=shared_bits,
+                                                       func_bounds=_shared.get("func_bounds"),
+                                                       plt_map=_shared.get("plt_map"))
+    except Exception:
+        result["global_writes"] = []
+
     result["segment_permissions"] = analyze_segments(path)
 
     # 三重 padding 验证

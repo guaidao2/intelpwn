@@ -29,8 +29,8 @@ class TestAnalyzeOverflow:
 
 
 class _I:
-    def __init__(self, addr, mnemonic, op_str):
-        self.address, self.mnemonic, self.op_str = addr, mnemonic, op_str
+    def __init__(self, addr, mnemonic, op_str, size=1):
+        self.address, self.mnemonic, self.op_str, self.size = addr, mnemonic, op_str, size
 
 
 class TestStackBufPassed:
@@ -214,3 +214,34 @@ class TestPaddingPrecision:
         ])
         r = _analyze_overflow_from_insns(insns, 64, "x", plt_map={0x50: "gets"})
         assert r and r[0]["calculated_padding"] == 0x40 + 8, f"padding 应 72: {r}"
+
+
+class TestGlobalWrites:
+    """全局缓冲写入线索 — 固件/配置解析类 (strcpy 到全局段, 栈检测覆盖不到)"""
+
+    def test_buf_global_target(self):
+        """mov rdi, [rip+全局] → 可写段 → 返回全局地址"""
+        from intelpwn.core.analysis.overflow import _buf_global_target
+        insns = [_I(0x1000, "mov", "rdi, qword ptr [rip + 0x2000]", 10),
+                 _I(0x100a, "call", "0x30", 5)]  # 0x100a+0x2000=0x300a
+        # mock _in_writable_segment → True
+        import intelpwn.core.analysis.overflow as ov
+        orig = ov._in_writable_segment
+        try:
+            ov._in_writable_segment = lambda p, a: True
+            assert ov._buf_global_target(insns, 1, "rdi") == 0x300a
+        finally:
+            ov._in_writable_segment = orig
+
+    def test_buf_global_target_non_writable(self):
+        """非可写段 (rodata) → None"""
+        from intelpwn.core.analysis.overflow import _buf_global_target
+        insns = [_I(0x1000, "mov", "rdi, qword ptr [rip + 0x2000]", 10),
+                 _I(0x100a, "call", "0x30", 5)]
+        import intelpwn.core.analysis.overflow as ov
+        orig = ov._in_writable_segment
+        try:
+            ov._in_writable_segment = lambda p, a: False
+            assert ov._buf_global_target(insns, 1, "rdi") is None
+        finally:
+            ov._in_writable_segment = orig
