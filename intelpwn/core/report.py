@@ -17,6 +17,63 @@ def _sev_tag(level: str) -> str:
     return SEV.get(level, SEV['信息'])
 
 
+# report.py 已硬编码渲染的 results key — 兜底区块跳过这些
+_RENDERED_KEYS = {
+    "angr_check", "bss_writable", "cross_validation", "file", "format_string",
+    "got", "has_binsh", "heap_analysis", "high_risk_strings", "libc", "overflow",
+    "path", "plt", "protections", "rop", "segment_permissions", "summary",
+    "win_targets",
+}
+
+
+def _fmt_value(v, indent="  │     "):
+    """插件输出通用格式化: dict → 键值对, list → 项, 标量 → 直显"""
+    if isinstance(v, dict):
+        lines = []
+        for k, val in v.items():
+            if isinstance(val, (dict, list)) and val:
+                lines.append(f"{indent}{k}:")
+                lines.append(_fmt_value(val, indent + "    "))
+            else:
+                lines.append(f"{indent}{k}: {val}")
+        return "\n".join(lines) or f"{indent}(空)"
+    if isinstance(v, list):
+        if not v:
+            return f"{indent}(空)"
+        return "\n".join(f"{indent}- {_fmt_value(i, indent + '  ')}" for i in v)
+    return f"{indent}{v}"
+
+
+def _print_extra_analyzers(results: dict):
+    """通配 CLI: 显示所有未硬编码渲染的 results key (内置扩展 + 未来插件)"""
+    extra = {k: v for k, v in results.items()
+             if k not in _RENDERED_KEYS and v not in (None, {}, [], "", False)}
+    if not extra:
+        return
+    print(f"  │")
+    print(f"  ├─ 扩展分析输出 ─────────────────────────────")
+    for k in sorted(extra):
+        v = extra[k]
+        if k == "menu" and isinstance(v, dict):
+            if v.get("present"):
+                print(f"  │  {SEV['信息']} 菜单交互: 选项 {v.get('trigger')} → {v.get('target_func')}"
+                      f" (锚点: {v.get('anchor') or '无'})")
+                for opt, info in (v.get("options") or {}).items():
+                    params = ",".join(info.get("params") or [])
+                    print(f"  │     [{opt}] {info.get('handler')}"
+                          + (f" 输入: {params}" if params else ""))
+            else:
+                print(f"  │  {SEV['信息']} 菜单交互: 未检测到 (无 scanf 数字菜单)")
+        elif k == "static_libc" and isinstance(v, dict) and v.get("system_addr"):
+            print(f"  │  {SEV['高危']} 静态链接 libc: system={v.get('system_addr')} "
+                  f"execve={v.get('execve_addr')} binsh={v.get('binsh_addr')}")
+        elif isinstance(v, dict) and "error" in v:
+            print(f"  │  {SEV['中危']} {k}: 分析异常 ({v['error']})")
+        else:
+            print(f"  │  {SEV['信息']} {k}:")
+            print(_fmt_value(v))
+
+
 def print_results(results: dict, binary: str):
     """输出完整分析结果 (兼容英文键名)"""
     basename = os.path.basename(binary)
@@ -395,6 +452,11 @@ def print_results(results: dict, binary: str):
             print(f"  │  {tag} {e.get('item')}: 静态={e.get('static')} 动态={e.get('dynamic')}"
                   + (f" ({note})" if note else ""))
         print(f"  │  结论: {cross.get('verdict')}")
+
+    # ═══════════════════════════════════════════════
+    # 9.7 扩展分析输出 (通配 CLI — 插件/未硬编码 key 全显示)
+    # ═══════════════════════════════════════════════
+    _print_extra_analyzers(results)
 
     # ═══════════════════════════════════════════════
     # 10. 综合发现
