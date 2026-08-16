@@ -185,7 +185,7 @@ python3 -m pytest tests/ -v
 ```
 intelpwn.py                          CLI 入口 (含 venv 垫片)
 ├── intelpwn/core/analysis/          分析引擎 (模块化 + 插件注册表)
-│   ├── __init__.py                  analyze_all() 编排器 + register_analyzer()
+│   ├── __init__.py                  analyze_all() 编排器 + register_analyzer() + 黑板缓存物化 (_shared)
 │   ├── protections.py               checksec/readelf 保护分析
 │   ├── plt.py                       PLT/GOT 扫描
 │   ├── overflow.py                  capstone 反汇编 → 栈溢出检测 (有界/无界双判定)
@@ -285,6 +285,7 @@ register_exploit_template("my_exploit", predicate, gen, priority=5)
 | 溢出函数过滤 | O(NxF) 列表推导 | O(N) + bisect 二分查找 | 100x |
 | ROP 扫描 | pwntools 全量 (3-5s) | capstone 定向 8 pattern (0.1s) | 50x |
 | 反汇编 | overflow + fmtstr 各跑一次 | 预反汇编 + 共享 | 2x |
+| **黑板基础设施缓存** | 各分析器重复 open_elf + 符号表 + PLT 解析 | `analyze_all` 一次性物化 `_shared` (insns/func_bounds/sym_by_addr/plt_map), overflow/menu 消费 | 大二进制省 4-5 次重复解析 |
 | padding 验证 | 每次跑 GDB (2s 固定) | 静态一致时跳过 (~0.2s) | 10x |
 
 ---
