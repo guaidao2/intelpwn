@@ -37,13 +37,16 @@ def disassemble_text(path: str):
         return None
 
 
-def analyze_assembly_overflow(path: str, insns=None, bits=None) -> list:
+def analyze_assembly_overflow(path: str, insns=None, bits=None,
+                              func_bounds=None, plt_map=None) -> list:
     """反汇编 .text 段, 找 lea + read/gets/scanf 模式 → 算 padding
 
     Args:
         path: 二进制路径
         insns: 可选预反汇编指令列表（避免重复反汇编）
         bits: 可选预检测位数
+        func_bounds: 可选黑板函数边界缓存 (func_bounds/plt_map 复用避免重扫)
+        plt_map: 可选黑板 PLT 地址→名称缓存
     """
     if insns is None or bits is None:
         try:
@@ -51,7 +54,8 @@ def analyze_assembly_overflow(path: str, insns=None, bits=None) -> list:
                 return _analyze_overflow_inner(elf, path)
         except Exception:
             return []
-    return _analyze_overflow_from_insns(insns, bits, path)
+    return _analyze_overflow_from_insns(insns, bits, path, func_bounds=func_bounds,
+                                        plt_map=plt_map)
 
 
 def _analyze_overflow_inner(elf, path: str) -> list:
@@ -134,45 +138,48 @@ def _stack_buf_passed(func_insns, call_idx: int, window: int = 30) -> bool:
     return False
 
 
-def _analyze_overflow_from_insns(insns, bits, path) -> list:
-    """反汇编结果分析 — 与反汇编解耦"""
+def _analyze_overflow_from_insns(insns, bits, path, func_bounds=None, plt_map=None) -> list:
+    """反汇编结果分析 — 与反汇编解耦 (func_bounds/plt_map 可传黑板缓存复用)"""
     results = []
 
-    # 按函数边界分割 (基于符号表) — 先物化列表再关文件
-    func_bounds = []
-    try:
-        with open_elf(path) as elf:
-            symtab = elf.get_section_by_name('.symtab')
-            if symtab:
-                for sym in symtab.iter_symbols():
-                    if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
-                        func_bounds.append((sym['st_value'], sym['st_value'] + sym['st_size'], sym.name))
-    except Exception:
-        pass
+    # 按函数边界分割 (基于符号表) — 黑板缓存优先, 无则自扫
+    if func_bounds is None:
+        func_bounds = []
+        try:
+            with open_elf(path) as elf:
+                symtab = elf.get_section_by_name('.symtab')
+                if symtab:
+                    for sym in symtab.iter_symbols():
+                        if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
+                            func_bounds.append((sym['st_value'], sym['st_value'] + sym['st_size'], sym.name))
+        except Exception:
+            pass
 
     if not func_bounds and insns:
         func_bounds = [(insns[0].address, insns[-1].address + 1, "sub_%x" % insns[0].address)]
 
-    # 建立 PLT 地址→名称映射 (静态链接无 PLT: fallback 到符号表, 直接调 libc 内部地址)
-    plt_map = {}
-    try:
-        pwn_elf = ELF(path, checksec=False)
-        plt_map = {v: k for k, v in pwn_elf.plt.items()}
-    except Exception:
-        pass
+    # 建立 PLT 地址→名称映射 (黑板缓存优先; 静态链接无 PLT: fallback 到符号表)
+    # 注意: 黑板可能传空 {} (静态链接无 PLT) — 必须继续走 fallback, 不能只判 None
     if not plt_map:
-        # 静态链接/无 PLT: 用符号表 (STT_FUNC) 建 addr→name, 覆盖 gets/read/strcpy 等
+        plt_map = {}
         try:
-            with open_elf(path) as elf:
-                for sec_name in ('.symtab', '.dynsym'):
-                    sec = elf.get_section_by_name(sec_name)
-                    if not sec:
-                        continue
-                    for sym in sec.iter_symbols():
-                        if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
-                            plt_map.setdefault(sym['st_value'], sym.name)
+            pwn_elf = ELF(path, checksec=False)
+            plt_map = {v: k for k, v in pwn_elf.plt.items()}
         except Exception:
             pass
+        if not plt_map:
+            # 静态链接/无 PLT: 用符号表 (STT_FUNC) 建 addr→name, 覆盖 gets/read/strcpy 等
+            try:
+                with open_elf(path) as elf:
+                    for sec_name in ('.symtab', '.dynsym'):
+                        sec = elf.get_section_by_name(sec_name)
+                        if not sec:
+                            continue
+                        for sym in sec.iter_symbols():
+                            if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
+                                plt_map.setdefault(sym['st_value'], sym.name)
+            except Exception:
+                pass
 
     # 危险输入函数分两类:
     #  - BOUNDED_INPUTS: 有显式大小参数, 需比较 大小 vs 栈帧

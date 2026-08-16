@@ -22,7 +22,7 @@ _RENDERED_KEYS = {
     "angr_check", "bss_writable", "cross_validation", "file", "format_string",
     "got", "has_binsh", "heap_analysis", "high_risk_strings", "libc", "overflow",
     "path", "plt", "protections", "rop", "segment_permissions", "summary",
-    "win_targets",
+    "win_targets", "_shared",
 }
 
 

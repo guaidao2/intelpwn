@@ -1,4 +1,4 @@
-"""SQLMap-style terminal output (matching PwnPasi convention)"""
+"""终端输出工具 — 彩色状态标记 + 进度信息 (intelpwn 报告/CLI 共用)"""
 
 import datetime
 import sys

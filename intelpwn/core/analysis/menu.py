@@ -171,40 +171,45 @@ def analyze_menu(path: str, results: dict = None) -> dict:
     if not target_func and not target_addr:
         return out
 
-    # 反汇编 .text + 函数边界 + 符号表
-    try:
-        with open_elf(path) as elf:
-            e_machine = elf.header.e_machine
-            bits = 64 if e_machine == 'EM_X86_64' else (32 if e_machine in ('EM_386', 'EM_486') else 0)
-            if not bits:
-                return out
-            md = Cs(CS_ARCH_X86, CS_MODE_64 if bits == 64 else CS_MODE_32)
-            md.detail = True
-            text = elf.get_section_by_name('.text')
-            if not text:
-                return out
-            insns = list(md.disasm(text.data(), text['sh_addr']))
-            func_bounds = []
-            sym_by_addr = {}
-            for sec_name in ('.symtab', '.dynsym'):
-                sec = elf.get_section_by_name(sec_name)
-                if not sec:
-                    continue
-                for sym in sec.iter_symbols():
-                    if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
-                        func_bounds.append((sym['st_value'], sym['st_value'] + sym['st_size'], sym.name))
-                        sym_by_addr.setdefault(sym['st_value'], sym.name)
-    except Exception as e:
-        log.warning("菜单分析反汇编失败 %s: %s", path, e)
-        return out
-
-    # PLT 地址→名称 (results["plt"] 是 name→addr, 反转)
-    plt_map = {}
-    for name, addr in (results.get("plt") or {}).items():
+    # 黑板基础设施缓存 (analyze_all 物化, 避免重复 open_elf/capstone) — 独立调用时回退自扫
+    shared = results.get("_shared") or {}
+    insns = shared.get("insns")
+    bits = shared.get("bits")
+    func_bounds = list(shared.get("func_bounds") or [])
+    sym_by_addr = dict(shared.get("sym_by_addr") or {})
+    if insns is None or not func_bounds:
         try:
-            plt_map[int(str(addr), 16)] = name
-        except (ValueError, TypeError):
-            pass
+            with open_elf(path) as elf:
+                e_machine = elf.header.e_machine
+                bits = 64 if e_machine == 'EM_X86_64' else (32 if e_machine in ('EM_386', 'EM_486') else 0)
+                if not bits:
+                    return out
+                md = Cs(CS_ARCH_X86, CS_MODE_64 if bits == 64 else CS_MODE_32)
+                md.detail = True
+                text = elf.get_section_by_name('.text')
+                if not text:
+                    return out
+                insns = list(md.disasm(text.data(), text['sh_addr']))
+                for sec_name in ('.symtab', '.dynsym'):
+                    sec = elf.get_section_by_name(sec_name)
+                    if not sec:
+                        continue
+                    for sym in sec.iter_symbols():
+                        if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
+                            func_bounds.append((sym['st_value'], sym['st_value'] + sym['st_size'], sym.name))
+                            sym_by_addr.setdefault(sym['st_value'], sym.name)
+        except Exception as e:
+            log.warning("菜单分析反汇编失败 %s: %s", path, e)
+            return out
+
+    # PLT 地址→名称: 黑板优先, 否则 results["plt"] (name→addr) 反转
+    plt_map = dict(shared.get("plt_map") or {})
+    if not plt_map:
+        for name, addr in (results.get("plt") or {}).items():
+            try:
+                plt_map[int(str(addr), 16)] = name
+            except (ValueError, TypeError):
+                pass
 
     # main 范围
     main_bounds = next(((s, e) for s, e, n in func_bounds if n == 'main'), None)

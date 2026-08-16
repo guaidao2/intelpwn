@@ -5,8 +5,11 @@ analyze_all 会在内置流程之后自动执行所有已注册的扩展分析�
 结果写入 result[<name>]。内置分析器仍走显式管线 (有依赖关系)。
 """
 
+import logging
 import os
 
+from pwn import ELF
+from intelpwn.utils.binary import open_elf
 from intelpwn.utils.output import print_info, print_success
 
 from .protections import analyze_protections
@@ -88,6 +91,34 @@ __all__ = [
 ]
 
 
+def _build_shared_blackboard(path: str, insns, bits):
+    """黑板基础设施缓存: 一次性物化 func_bounds/sym_by_addr/plt_map, 供各分析器消费.
+
+    避免 menu/callgraph/overflow 各自重复 open_elf + 符号表 + PLT 扫描 (大二进制
+    静态链接可省 4-5 次重复解析)。
+    """
+    shared = {"insns": insns, "bits": bits, "func_bounds": [], "sym_by_addr": {}, "plt_map": {}}
+    try:
+        with open_elf(path) as elf:
+            for sec_name in ('.symtab', '.dynsym'):
+                sec = elf.get_section_by_name(sec_name)
+                if not sec:
+                    continue
+                for sym in sec.iter_symbols():
+                    if sym['st_info']['type'] == 'STT_FUNC' and sym['st_size'] > 0:
+                        shared["func_bounds"].append((sym['st_value'],
+                                                      sym['st_value'] + sym['st_size'], sym.name))
+                        shared["sym_by_addr"].setdefault(sym['st_value'], sym.name)
+    except Exception as e:
+        logging.getLogger("intelpwn").warning("黑板符号表物化失败 %s: %s", path, e)
+    try:
+        pwn_elf = ELF(path, checksec=False)
+        shared["plt_map"] = {v: k for k, v in pwn_elf.plt.items()}
+    except Exception:
+        pass
+    return shared
+
+
 def analyze_all(path: str, libc_path: str = None) -> dict:
     """全量分析入口
 
@@ -108,15 +139,19 @@ def analyze_all(path: str, libc_path: str = None) -> dict:
     print_info("扫描PLT危险函数...")
     result["plt"] = analyze_plt(path)
 
-    # 预反汇编 .text — 供 overflow/fmtstr 共享，避免重复扫描
+    # 预反汇编 .text + 物化共享黑板 (基础设施缓存, 各分析器消费避免重复扫描)
     pre_disasm = disassemble_text(path)
     if pre_disasm:
         shared_insns, shared_bits, _, _ = pre_disasm
     else:
         shared_insns, shared_bits = None, None
+    _shared = _build_shared_blackboard(path, shared_insns, shared_bits)
+    result["_shared"] = _shared
 
     print_info("反汇编分析栈溢出...")
-    asm_results = analyze_assembly_overflow(path, insns=shared_insns, bits=shared_bits)
+    asm_results = analyze_assembly_overflow(path, insns=shared_insns, bits=shared_bits,
+                                            func_bounds=_shared.get("func_bounds"),
+                                            plt_map=_shared.get("plt_map"))
     result["overflow"] = asm_results
 
     print_info("检测格式化字符串...")

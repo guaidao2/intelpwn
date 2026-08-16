@@ -272,6 +272,8 @@ register_exploit_template("my_exploit", predicate, gen, priority=5)
 
 **3. 前端兜底渲染** — 分析器输出的任何 key, 未硬编码时自动渲染为"其他发现"折叠卡片 (JSON 结构化, XSS 转义), 无需改 `webui/static/app.js`。
 
+**4. 通配 CLI** — 终端报告的"扩展分析输出"区块自动显示所有插件/扩展分析器的结果 (通用键值渲染 + 菜单/静态链接 libc 专项), 新增插件无需改 `report.py`。
+
 > 能力包示例: 静态链接专项 / 复杂 ROP 组装 / 堆助手等, 均可按此三件套接入。
 
 ### 算法优化
