@@ -29,20 +29,20 @@
 |---|---|---|
 | **栈缓冲区溢出** | capstone 反汇编: 有界读 (read/fgets/memcpy/strncpy/snprintf) 比大小, 无界写 (gets/strcpy/sprintf/strcat) 看目标地址 | 双重判定 + 置信度 |
 | **scanf 精确判定** | 解析格式串: 仅无宽度 %s 判险, %d/%x 不误报 | 消除旧版无条件误报 |
-| **格式化字符串** | 静态 + 黑盒, 合并 4 批加速 | 偏移自动定位 |
+| **格式化字符串** | 静态 + 黑盒, 合并 4 批加速; **无 printf 族直接排除 (防菜单回显误判)** | 偏移自动定位 |
 | **安全保护** | Canary / NX / PIE / RELRO / RWX 段 / 静态链接 | 带风险评级 |
 | **PLT 危险函数** | 自动标注 system/execve/gets/printf 等 | 用途分类 |
 | **ROP gadgets** | capstone 定向扫描 (x64: pop_rdi/rsi/rdx, ret, jmp_rsp, syscall;ret · x86: pop_eax/ebx/ecx/edx, int 0x80) + pwntools 回退 | ~0.1s |
 | **x86 32 位支持** | cdecl 栈传参检测 (lea [ebp-X] → push/mov[esp]), scanf %s 格式串 vaddr→offset 映射, 三重 padding 验证自适应 (eip/esp/ebp + p32) | 全链路覆盖 |
 | **静态链接专项** | libc 内置符号识别 (system/execve/binsh 固定地址), 危险函数符号表 fallback (静态链接无 PLT 也能识别 gets/read), fmtstr 无 GOT 覆写返回地址路径 | 能力包 |
 | **复杂 ROP 组装** | ret2csu (__libc_csu_init) 识别 + x86 pop;pop;ret 多参链 | 链可行性分析 |
-| **堆助手** | glibc 版本识别 + tcache/safe-linking/__free_hook 行为表 (按版本给攻击面) + **tcache poisoning 版本感知原语** (GOT→system 完整路径 / 2.34+ 现代路径标注) | 独立模块 |
+| **堆助手** | glibc 版本识别 (**支持 --libc 附件判定**) + tcache/safe-linking/__free_hook 行为表 (按版本给攻击面) + **tcache poisoning 版本感知原语** (GOT→system 完整路径 / 2.34+ 现代路径标注) | 独立模块 |
 | **BSS 可写区** | ELF 符号表扫描大尺寸 BSS 符号 | 用于 shellcode 存储 |
 | **CFG 复杂度** | 指令流直接计数边和节点 (去 NetworkX) | 5ms vs 500ms |
 | **堆漏洞线索** | 同函数多 free (double-free) / malloc 大小算术运算 (整数溢出) / 循环内 free (UAF 场景) | 启发式提示 |
 | **angr 符号执行** | 主动发现: 全量枚举危险调用点 (可达性 + 栈目标 + 大小 taint), 静态漏检的 strcpy 等无界写也能发现并算 padding; 溢出点符号化 padding 交叉确认 | 可选插件 |
 | **汇编自动注释** | 三级注释引擎: 漏洞链(红, 危险输入点/可溢出字节数/返回地址改写点, 来自分析结论) · 风险提示(黄, syscall 号/canary/敏感函数, 规则猜测) · 语义标注(灰, 序言/栈帧/PLT 调用解析); 供 `--web` 反汇编视图 | 规则引擎 |
-| **菜单交互识别** | scanf 数字菜单双通道识别 (rodata "N. 名称" 菜单项 + cmp/je 分支链) → options 映射表 {选项: {handler, 参数结构}}; **溢出题匹配漏洞函数触发注入, 堆题菜单也识别 (options 供堆模板)** | 通用基础设施 |
+| **菜单交互识别** | 双通道识别 (rodata "N. 名称" 菜单项 + cmp/je 分支链) + **跳转表菜单** ([reg*8+table]+call reg); **stripped 无符号赛题两通道定位** (输入调用自身链 / 读选项函数调用点链 + 业务过滤), rodata 标签回填 handler 名 (func_ → add/del/show/edit); 溢出题匹配漏洞函数触发注入, 堆题菜单也识别 (options 供堆模板) | 通用基础设施 |
 | **利用策略生成** | 基于保护状态 + 可用函数 + ROP → 自动推导方案 | 多种策略 |
 
 ### Exploit 生成
