@@ -71,6 +71,26 @@ def _func_bounds(path):
         return funcs
 
 
+def _anonymous_funcs(insns):
+    """stripped (无符号表) 时从 .text 指令按函数启发切分: endbr64 / 函数尾 (ret) 后边界"""
+    funcs = []
+    cur_start = insns[0].address if insns else None
+    for k, insn in enumerate(insns):
+        is_boundary = False
+        if insn.mnemonic == 'endbr64':
+            is_boundary = True
+        elif insn.mnemonic == 'ret' and k + 1 < len(insns):
+            nxt = insns[k + 1]
+            if nxt.address - (insn.address + insn.size) > 4:  # ret 后有 padding → 函数尾
+                is_boundary = True
+        if is_boundary and cur_start is not None and insn.address > cur_start:
+            funcs.append((cur_start, insn.address, "func_%x" % cur_start))
+            cur_start = insn.address
+    if cur_start is not None and insns:
+        funcs.append((cur_start, insns[-1].address + 1, "func_%x" % cur_start))
+    return funcs
+
+
 def _sym_map_for(path):
     """符号表 {addr: 函数名} — 按二进制缓存. 含 PLT stub 解析 (symtab 无 read@plt 类条目).
 
@@ -130,7 +150,11 @@ def _vuln_call_site(v) -> int:
 
 def _resolve_func_addr(raw: str, binary: str):
     """地址解析: 前端发十进制; 仅当字符串形如 hex (0x 前缀或含 a-f) 才按 hex 解析"""
-    bounds = {s: e for s, e, _ in _func_bounds(binary)}
+    # 用 .text 内函数边界 (含 stripped 匿名函数) 消歧 — 与 _api_functions 一致
+    from intelpwn.core.webui import _Handler
+    h = _Handler.__new__(_Handler)
+    h.binary = binary
+    bounds = {s: e for s, e, _ in h._api_bounds()}
     stripped = raw.strip()
     candidates = []
     if stripped.lower().startswith("0x") or any(ch in "abcdefABCDEF" for ch in stripped):
@@ -149,6 +173,10 @@ def _resolve_func_addr(raw: str, binary: str):
 
 
 class _Handler(BaseHTTPRequestHandler):
+    # HTTP/1.0: 每请求后关闭连接 → handler 线程不被 keep-alive 永久 park,
+    # Ctrl-C 时 server_close() 的 join 能立即返回 (HTTP/1.1 keep-alive 会让
+    # 浏览器连接常驻, 线程阻塞在 recv 导致进程杀不掉)
+    protocol_version = "HTTP/1.0"
     results = {}
     binary = ""
 
@@ -185,10 +213,34 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ── API 实现 ─────────────────────────────────────────────
 
+    def _api_bounds(self):
+        """函数边界: 符号表优先; stripped (无符号表) 回退匿名函数切分.
+        _api_functions/_api_disasm/_api_cfg 共用, 保证列表与反汇编一致"""
+        bounds = _func_bounds(self.binary)
+        if not bounds:
+            pre = _get_disas(self.binary)
+            if pre and pre[0]:
+                bounds = _anonymous_funcs(pre[0])
+        return bounds
+
     def _api_functions(self):
-        """函数列表 + 漏洞标记 (溢出调用点地址)"""
+        """函数列表 + 漏洞标记 (溢出调用点地址)
+
+        只列 .text 内的函数 — 符号表含 _init/_fini (在 .init/.fini 段) 等
+        无 .text 指令的符号, 前端默认选中会渲染空白。
+        stripped (无符号表) 时从 .text 反汇编按函数启发切分匿名函数。
+        """
+        pre = _get_disas(self.binary)
+        text_range = None
+        insns = None
+        if pre and pre[0]:
+            insns = pre[0]
+            text_range = (insns[0].address, insns[-1].address + 1)
         funcs = []
-        for start, end, name in _func_bounds(self.binary):
+        bounds = self._api_bounds()
+        for start, end, name in bounds:
+            if text_range and not (text_range[0] <= start < text_range[1]):
+                continue  # 不在 .text (如 _init/.fini/PLT stub) — 不可反汇编
             funcs.append({"name": name, "start": start, "end": end})
         vuln_map = {}
         for v in self.results.get("overflow", []):
@@ -205,7 +257,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _api_disasm(self, func_addr):
         """函数反汇编, 高亮标记 + 三级自动注释 (漏洞链/风险/语义)"""
-        bounds = {s: e for s, e, _ in _func_bounds(self.binary)}
+        bounds = {s: e for s, e, _ in self._api_bounds()}
         end = bounds.get(func_addr)
         if not end:
             return {"error": "函数不存在"}
@@ -222,6 +274,9 @@ class _Handler(BaseHTTPRequestHandler):
             return {"error": "反汇编失败"}
         insns, bits = pre[0], pre[1]
         ins = [i for i in insns if func_addr <= i.address < end]
+        if not ins:
+            return {"error": "该函数无 .text 指令 (可能位于 .init/.fini/PLT 段)",
+                    "function": func_addr, "lines": []}
         lines = []
         for i in ins:
             lines.append({
@@ -258,7 +313,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _api_cfg(self, func_addr):
         """函数基本块 CFG, 标记漏洞调用点所在块"""
-        bounds = {s: e for s, e, _ in _func_bounds(self.binary)}
+        bounds = {s: e for s, e, _ in self._api_bounds()}
         end = bounds.get(func_addr)
         if not end:
             return {"error": "函数不存在"}
@@ -274,8 +329,11 @@ class _Handler(BaseHTTPRequestHandler):
         pre = _get_disas(self.binary)
         insns = pre[0] if pre else None
         bits = pre[1] if pre else None
-        return build_function_cfg(self.binary, func_addr, end,
-                                  insns=insns, bits=bits, mark_addrs=mark_addrs)
+        cfg = build_function_cfg(self.binary, func_addr, end,
+                                 insns=insns, bits=bits, mark_addrs=mark_addrs)
+        if not cfg.get("nodes"):
+            cfg["error"] = "该函数无 .text 指令 (可能位于 .init/.fini/PLT 段)"
+        return cfg
 
     # ── 基础响应 ─────────────────────────────────────────────
 
@@ -364,4 +422,6 @@ def serve(results: dict, binary: str, host: str = "0.0.0.0",
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n[+] 服务已停止")
+        # 兜底: 跳过 join 仍存活 handler 线程 (HTTP/1.0 下通常已无), daemon 线程随进程退出
+        httpd.block_on_close = False
         httpd.server_close()

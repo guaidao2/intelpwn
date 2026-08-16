@@ -110,3 +110,53 @@ def test_sym_map_for_plt_resolution():
     m = _sym_map_for("challenges/challenge_ret2win")
     assert 0x401185 in m and m[0x401185] == "vulnerable"  # symtab 符号仍在
     assert m.get(0x401050) == "read@plt"                  # PLT stub → read@plt
+
+
+def test_anonymous_funcs_stripped_fallback():
+    """stripped (无符号表) 场景: _anonymous_funcs 从 .text 切分, 每个函数可反汇编"""
+    from intelpwn.core.analysis.overflow import disassemble_text
+    from intelpwn.core.webui import _anonymous_funcs
+    pre = disassemble_text(BIN)
+    assert pre, "应能反汇编"
+    fns = _anonymous_funcs(pre[0])
+    assert fns, "stripped fallback 应生成匿名函数"
+    for s, e, n in fns[:2]:
+        cnt = sum(1 for i in pre[0] if s <= i.address < e)
+        assert cnt > 0, f"{n} 无 .text 指令"
+
+
+def test_api_functions_filters_non_text():
+    """_api_functions 只列 .text 内函数 (防御 st_size>0 的 _init/_fini 等)"""
+    from intelpwn.core.webui import _Handler, _func_bounds
+    h = _Handler.__new__(_Handler)
+    h.binary = BIN
+    h.results = {"overflow": []}
+    fns = h._api_functions()
+    assert fns, "应有函数"
+    from intelpwn.core.analysis.overflow import disassemble_text
+    pre = disassemble_text(BIN)
+    insns = pre[0]
+    for f in fns:
+        assert insns[0].address <= f["start"] < insns[-1].address + 1, \
+            f"{f['name']} 不在 .text 范围"
+
+
+def test_stripped_e2e_functions_disasm_cfg():
+    """stripped (无符号表) 端到端: /api/functions 每个函数在 disasm/cfg 可解"""
+    import intelpwn.core.webui as webui
+    from intelpwn.core.webui import _Handler
+    orig = webui._func_bounds
+    try:
+        webui._func_bounds = lambda path: []  # 模拟 stripped
+        h = _Handler.__new__(_Handler)
+        h.binary = BIN
+        h.results = {"overflow": []}
+        fns = h._api_functions()
+        assert fns, "stripped 应有匿名函数列表"
+        for f in fns:
+            d = h._api_disasm(f["start"])
+            assert not d.get("error"), f"{f['name']} disasm: {d.get('error')}"
+            c = h._api_cfg(f["start"])
+            assert not c.get("error"), f"{f['name']} cfg: {c.get('error')}"
+    finally:
+        webui._func_bounds = orig
