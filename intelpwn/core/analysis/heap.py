@@ -185,7 +185,7 @@ def _detect_clues(path, insns) -> list:
     return clues
 
 
-def detect_heap(path: str) -> dict:
+def detect_heap(path: str, libc_path: str = None) -> dict:
     """检测堆操作函数使用情况 + 静态漏洞线索"""
     plt = analyze_plt(path)
     heap_funcs = [f for f in plt if f in _HEAP_FUNCS]
@@ -208,7 +208,7 @@ def detect_heap(path: str) -> dict:
     glibc = {}
     try:
         from .glibc_meta import detect_glibc_meta
-        glibc = detect_glibc_meta()
+        glibc = detect_glibc_meta(libc_path)
     except Exception:
         pass
 

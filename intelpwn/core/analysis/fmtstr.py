@@ -126,6 +126,23 @@ def detect_format_string(path: str, insns=None, bits=None) -> dict:
         probe_timeout = 3.0
     ctx = _fmtstr_static_context(path, insns=insns, bits=bits)
 
+    # 无 printf 族 → 不可能存在格式化字符串漏洞 (黑盒回显会误判, 如堆题菜单回显)
+    try:
+        from .plt import analyze_plt
+        _plt = analyze_plt(path)
+        _PRINTF_FAMILY = ('printf', 'sprintf', 'snprintf', 'fprintf', 'vsprintf',
+                          'vprintf', '__printf_chk', 'dprintf', 'asprintf')
+        if _plt and not any(p in _plt for p in _PRINTF_FAMILY):
+            return {
+                "vulnerable": False,
+                "evidence": ["无 printf 族调用, 排除格式化字符串漏洞"],
+                "evidence_detail": "PLT 无 printf/sprintf/fprintf/vsprintf 等",
+                "best_offset": None,
+                "risk": "低危",
+            }
+    except Exception:
+        pass
+
     # 静态分析确认安全 → 直接跳过黑盒
     if ctx.get("dangerous") is False and ctx.get("call_style") == "safe":
         return {

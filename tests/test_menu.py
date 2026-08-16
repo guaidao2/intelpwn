@@ -66,3 +66,34 @@ def test_analyze_menu_heap_challenge():
     opts = r.get("options") or {}
     handlers = {info.get("handler") for info in opts.values()}
     assert {"add", "delete", "show", "edit"} & handlers, f"堆题 handler 未识别: {handlers}"
+
+
+def test_menu_stripped_fallback_scanf_scan():
+    """stripped (无 main 符号) fallback: 扫第一个含 scanf 调用的匿名函数"""
+    import os
+    b = "challenges/challenge_tcache_dup"
+    if not os.path.exists(b):
+        return
+    import intelpwn.core.analysis as analysis_pkg
+    import intelpwn.core.analysis.menu as menu_mod
+    from intelpwn.core.analysis import _build_shared_blackboard
+    from intelpwn.core.analysis.overflow import disassemble_text
+
+    pre = disassemble_text(b)
+    bb = _build_shared_blackboard(b, pre[0], pre[1])
+    # 模拟 stripped: 函数名全部匿名 (func_bounds 无 main)
+    stripped_bounds = [(s, e, "") for s, e, n in bb["func_bounds"]]
+    stripped_bb = dict(bb)
+    stripped_bb["func_bounds"] = stripped_bounds
+    stripped_bb["sym_by_addr"] = {}
+
+    orig = analysis_pkg._build_shared_blackboard
+    try:
+        analysis_pkg._build_shared_blackboard = lambda p, i, bits: stripped_bb
+        r = menu_mod.analyze_menu(b, {"overflow": [], "plt": {}})
+    finally:
+        analysis_pkg._build_shared_blackboard = orig
+    # fallback 应仍能识别菜单选项 (第一个含 scanf 分发链的匿名函数)
+    opts = r.get("options") or {}
+    # stripped 无符号 → handler 为匿名 func_ 名, 断言 4 个选项均被识别
+    assert len(opts) >= 4, f"stripped fallback 选项不足: {opts}"

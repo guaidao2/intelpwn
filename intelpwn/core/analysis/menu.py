@@ -78,8 +78,75 @@ def _imm_of(insn):
     return int(s, 16) if s.startswith('0x') else int(s)
 
 
+def _has_chain(insns_window):
+    """判断指令窗口内是否有 cmp imm,reg + je/jne 分发链特征"""
+    return any(tk.mnemonic == 'cmp' and nxt.mnemonic in ('je', 'jne')
+               and nxt.op_str.strip().startswith('0x')
+               for tk, nxt in zip(insns_window, insns_window[1:]))
+
+
+def _backfill_rodata_handlers(path, options):
+    """stripped 场景: options 的 handler 是 func_ 匿名名时, 用 rodata 菜单项
+    ("1.Add\n2.Del" 标签) 回填语义名 (add/del/show/edit), 供堆模板按名匹配"""
+    if not options:
+        return
+    if any(v.get("handler") and not v["handler"].startswith("func_") for v in options.values()):
+        return  # 已有符号名, 无需回填
+    try:
+        items = _rodata_menu_items(path)
+    except Exception:
+        return
+    for item in items:
+        m = re.match(r'^(\d+)\.\s*(\S+)', item)
+        if m and m.group(1) in options:
+            options[m.group(1)]["handler"] = m.group(2).lower()
+
+
+def _func_start(insns, idx):
+    """从指令索引向上找函数起点 (最近的 endbr64 / ret 后边界)"""
+    for k in range(idx, -1, -1):
+        if insns[k].mnemonic == 'endbr64':
+            return insns[k].address
+        if insns[k].mnemonic == 'ret':
+            return insns[k + 1].address if k + 1 < len(insns) else None
+    return None
+
+
+def _func_end(insns, idx):
+    """从指令索引向下找函数终点 (下一 endbr64 或文件尾)"""
+    for k in range(idx + 1, len(insns)):
+        if insns[k].mnemonic == 'endbr64':
+            return insns[k].address
+    return None
+
+
+def _find_jump_table(insns, plt_map, sym_by_addr):
+    """识别手写跳转表菜单: lea rX,[reg*8] + lea rax,[rip+table] + mov rax,[rdx+rax] + call/jmp rax
+
+    Returns:
+        {"table": 表基址, "prompt": ""} 或 None
+    """
+    for k, insn in enumerate(insns):
+        if insn.mnemonic != 'lea' or '*8' not in insn.op_str:
+            continue
+        window = insns[k + 1:k + 16]
+        for n in window:
+            if n.mnemonic != 'lea' or '[rip' not in n.op_str:
+                continue
+            table = _lea_rip_target(n)
+            if not table:
+                continue
+            # 后续 mov rax,[rdx+rax] (或 [reg+rax]) + call/jmp rax
+            for m in insns[k:k + 24]:
+                if m.mnemonic not in ('call', 'jmp'):
+                    continue
+                op = m.op_str.strip()
+                if op.startswith('rax') or op.startswith('qword ptr [r'):
+                    return {"table": table, "prompt": ""}
+    return None
+
+
 def _call_target(insn, plt_map, sym_by_addr):
-    """解析 call 指令的目标函数名 (直接地址/PLT 间接/寄存器)"""
     op = insn.op_str.strip()
     if op.startswith('qword ptr [rip') or op.startswith('dword ptr [rip'):
         m = re.search(r'0x[0-9a-fA-F]+', op)
@@ -91,7 +158,14 @@ def _call_target(insn, plt_map, sym_by_addr):
         name = sym_by_addr.get(addr)
         if name:
             return name
-        return plt_map.get(addr)
+        got = plt_map.get(addr)
+        if got:
+            return got
+        # CET endbr64 错位: stub 起点 (endbr64) 与 jmp 槽 (key) 相差 4 字节
+        for delta in (4, -4):
+            got = plt_map.get(addr + delta)
+            if got:
+                return got
     return None
 
 
@@ -156,6 +230,8 @@ def analyze_menu(path: str, results: dict = None) -> dict:
     results = results or {}
     out = {"present": False, "confident": False, "prompt": "", "anchor": "",
            "trigger": "", "target_func": "", "numeric": False, "options": {}}
+    scanf_idx = None  # 菜单读选项调用点 (主流程在 main_insns 局部索引)
+    scanf_addr = None  # fallback 定位的读选项调用地址 (地址跨切片安全)
 
     overflow = results.get("overflow") or []
     # 菜单识别独立于漏洞类型: 溢出题匹配溢出函数, 堆题 (无 overflow) 也识别 options
@@ -198,22 +274,92 @@ def analyze_menu(path: str, results: dict = None) -> dict:
             except (ValueError, TypeError):
                 pass
 
+    # 菜单分发输入函数: scanf (格式串) / atoll·atoi·strtol (read 读入字符串后转数字)
+    _MENU_INPUTS = ('scanf', 'atoll', 'atoi', 'strtol', 'strtoul')
+
     # main 范围
     main_bounds = next(((s, e) for s, e, n in func_bounds if n == 'main'), None)
+    if not main_bounds:
+        # 跳转表菜单 (手写函数指针表): [reg*8 + table] + call/jmp reg
+        # 常见于 stripped 堆题 (read 读入 + atoll 转数字 + 间接调用), .bss 表静态不可读
+        jt = _find_jump_table(insns, plt_map, sym_by_addr)
+        if jt:
+            items = _rodata_menu_items(path)
+            for item in items:
+                m = re.match(r'^(\d+)\.\s*(\S+)', item)
+                if m:
+                    out["options"][m.group(1)] = {"handler": m.group(2).lower(),
+                                                  "address": "", "params": []}
+            if out["options"]:
+                out["present"] = True
+            out["prompt"] = " ".join(items) if items else jt["prompt"]
+            out["anchor"] = _anchor_from_prompt(out["prompt"]) if out["prompt"] else ""
+            out["numeric"] = True
+            out["jump_table"] = hex(jt["table"])
+            return out
+        # stripped 赛题 (无符号表 → func_bounds 可能完全为空):
+        # 两通道定位菜单分发:
+        #   A) 输入调用 (atoll/scanf) 自身后 40 条有 cmp/je 链 (main 内 scanf 菜单)
+        #   B) 输入在子函数 (读选项函数) → 其调用点后 40 条有链 (duck 类, call 读数字函数)
+        for j, i in enumerate(insns):
+            if i.mnemonic != 'call':
+                continue
+            name = _call_target(i, plt_map, sym_by_addr) or ''
+            if not any(k in name for k in _MENU_INPUTS):
+                continue
+            if _has_chain(insns[j + 1:j + 40]):
+                main_bounds = (_func_start(insns, j) or insns[0].address,
+                               _func_end(insns, j) or insns[-1].address)
+                scanf_addr = insns[j].address
+                break
+            read_fn = _func_start(insns, j)
+            if not read_fn:
+                continue
+            # 读选项函数特征: 只 read+转数字返回, 无业务调用
+            # (handler 如 delete 也含 scanf 读参数 + free — 排除, 否则误当读选项)
+            fn_end = _func_end(insns, j) or insns[-1].address
+            fn_insns = [i for i in insns if read_fn <= i.address < fn_end]
+            biz_calls = ('free', 'malloc', 'puts', 'printf', 'write', 'memcpy', 'strlen', 'system', 'realloc', 'calloc')
+            has_biz = any(i.mnemonic == 'call'
+                          and (_call_target(i, plt_map, sym_by_addr) or '') in biz_calls
+                          for i in fn_insns)
+            if has_biz:
+                continue
+            for j2, i2 in enumerate(insns):
+                if i2.mnemonic != 'call' or i2.op_str.strip() != hex(read_fn):
+                    continue
+                if _has_chain(insns[j2 + 1:j2 + 40]):
+                    main_bounds = (_func_start(insns, j2) or insns[0].address,
+                                   _func_end(insns, j2) or insns[-1].address)
+                    scanf_addr = insns[j2].address
+                    break
+            if main_bounds:
+                break
     if not main_bounds:
         return out
     main_insns = [i for i in insns if main_bounds[0] <= i.address < main_bounds[1]]
     if not main_insns:
         return out
 
-    # 1) 找 scanf 调用点
-    scanf_idx = None
-    for idx, insn in enumerate(main_insns):
-        if insn.mnemonic == 'call':
-            name = _call_target(insn, plt_map, sym_by_addr) or ''
-            if 'scanf' in name:
-                scanf_idx = idx
+    # 1) 找菜单输入调用点 (跳过无分发链的调用 — 业务函数读参数, 非菜单)
+    if scanf_addr:
+        # fallback 定位的读选项调用 (地址 → main_insns 局部索引)
+        for li, insn in enumerate(main_insns):
+            if insn.address == scanf_addr:
+                scanf_idx = li
                 break
+    if scanf_idx is None:
+        for idx, insn in enumerate(main_insns):
+            if insn.mnemonic == 'call':
+                name = _call_target(insn, plt_map, sym_by_addr) or ''
+                if any(k in name for k in _MENU_INPUTS):
+                    tail = main_insns[idx + 1:idx + 40]
+                    has_chain = any(tk.mnemonic == 'cmp' and nxt.mnemonic in ('je', 'jne')
+                                    and nxt.op_str.strip().startswith('0x')
+                                    for tk, nxt in zip(tail, tail[1:]))
+                    if has_chain or len(main_insns) < 60:
+                        scanf_idx = idx
+                        break
     if scanf_idx is None:
         return out
 
@@ -234,11 +380,10 @@ def analyze_menu(path: str, results: dict = None) -> dict:
     for idx in range(scanf_idx + 1, len(main_insns)):
         insn = main_insns[idx]
         if insn.mnemonic == 'cmp':
-            m = re.match(r'^(0x[0-9a-fA-F]+|\d+)\s*,\s*(\S+)$', insn.op_str)
-            if not m:
-                m = re.match(r'^(\S+)\s*,\s*(0x[0-9a-fA-F]+|\d+)$', insn.op_str)
+            # 兼容寄存器 (cmp eax, 1) 与内存操作数 (cmp dword ptr [rbp - 4], 4)
+            m = re.search(r',\s*(0x[0-9a-fA-F]+|\d+)\s*$', insn.op_str)
             if m:
-                imm = m.group(1) if m.group(1).startswith(('0x', '0X', '1', '2', '3', '4', '5', '6', '7', '8', '9')) else m.group(2)
+                imm = m.group(1)
                 nxt = main_insns[idx + 1] if idx + 1 < len(main_insns) else None
                 if nxt and nxt.mnemonic in ('je', 'jne') and nxt.op_str.strip().startswith('0x'):
                     jccs.append((imm, idx + 1, nxt.mnemonic, int(nxt.op_str.strip(), 16)))
@@ -282,6 +427,7 @@ def analyze_menu(path: str, results: dict = None) -> dict:
     if not out["confident"]:
         # 无溢出函数匹配 (堆题等): 菜单结构仍识别 — options 供堆 exploit 模板 (gen_tcache_dup) 使用
         if options:
+            _backfill_rodata_handlers(path, options)
             out["options"] = options
             out["present"] = True
         return out
@@ -321,6 +467,7 @@ def analyze_menu(path: str, results: dict = None) -> dict:
     out["prompt"] = prompt
     out["anchor"] = _anchor_from_prompt(prompt) if prompt else ""
     out["numeric"] = is_numeric
+    _backfill_rodata_handlers(path, options)
     out["options"] = options
     out["present"] = True
     return out

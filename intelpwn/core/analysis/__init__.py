@@ -183,7 +183,7 @@ def analyze_all(path: str, libc_path: str = None) -> dict:
     print_info("计算CFG复杂度指标...")
     result["cfg"] = analyze_cfg(path)
 
-    result["heap_analysis"] = detect_heap(path)
+    result["heap_analysis"] = detect_heap(path, libc_path)
 
     result["high_risk_strings"] = scan_high_risk_strings(path)
 
