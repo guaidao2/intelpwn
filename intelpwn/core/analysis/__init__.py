@@ -111,11 +111,23 @@ def _build_shared_blackboard(path: str, insns, bits):
                         shared["sym_by_addr"].setdefault(sym['st_value'], sym.name)
     except Exception as e:
         logging.getLogger("intelpwn").warning("黑板符号表物化失败 %s: %s", path, e)
+    # PLT 槽 → 符号名: pyelftools 跨平台主方案 (pwntools ELF.plt 在 Windows 缺
+    # pkg_resources 会静默空) + pwntools 兜底; 失败记 warning 不静默
     try:
-        pwn_elf = ELF(path, checksec=False)
-        shared["plt_map"] = {v: k for k, v in pwn_elf.plt.items()}
-    except Exception:
-        pass
+        from .win_targets import _build_plt_map
+        shared["plt_map"] = _build_plt_map(path, shared["bits"] or 64)
+    except Exception as e:
+        logging.getLogger("intelpwn").warning("黑板 PLT 物化失败 %s: %s", path, e)
+    if not shared["plt_map"]:
+        try:
+            pwn_elf = ELF(path, checksec=False)
+            shared["plt_map"] = {v: k for k, v in pwn_elf.plt.items()}
+        except Exception as e:
+            logging.getLogger("intelpwn").warning("黑板 PLT pwntools 兜底失败 %s: %s", path, e)
+    if not shared["plt_map"]:
+        # pwntools 的 Windows 失败是静默空 .plt (不抛异常) — 显式告警堵住静默
+        logging.getLogger("intelpwn").warning(
+            "黑板 PLT 物化为空 (pyelftools + pwntools 均未解析出槽位): %s — 下游将回退符号表", path)
     return shared
 
 
