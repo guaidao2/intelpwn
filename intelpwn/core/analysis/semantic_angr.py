@@ -49,7 +49,7 @@ def _eval_at_call(path: str, func_addr: int, call_addr: int, reg: str, bits: int
 
 def angr_eval_size(path: str, func_addr: int, call_addr: int, size_reg: str, bits: int,
                    mode: str = "throttled") -> int:
-    """angr 求读取大小 — 节流/强制模式"""
+    """angr 求读取大小 — 节流/强制模式. 结果合理性过滤 (垃圾大数 = 栈变量/未初始化)."""
     global _ANG_CALL_COUNT
     if mode != "force":
         if _ANG_CALL_COUNT >= _ANG_MAX_CALLS:
@@ -61,7 +61,11 @@ def angr_eval_size(path: str, func_addr: int, call_addr: int, size_reg: str, bit
             return None
         _ANG_CALL_COUNT += 1
     v = _eval_at_call(path, func_addr, call_addr, size_reg, bits)
-    return v if isinstance(v, int) else None
+    # 合理性: 正常 read/memcpy 大小 < 64KB; 垃圾大数 (0x7F3F5F5E 类,
+    # 来自 scanf 读入的栈变量/未初始化内存) 视为不可靠 → None (走保守分支)
+    if isinstance(v, int) and 0 < v < 0x10000:
+        return v
+    return None
 
 
 def angr_eval_buf_offset(path: str, func_addr: int, call_addr: int, buf_reg: str, bits: int,
@@ -91,8 +95,10 @@ def angr_eval_buf_offset(path: str, func_addr: int, call_addr: int, buf_reg: str
         s = sm.found[0]
         buf_val = s.solver.eval(s.regs.__getattr__(buf_reg), cast_to=int)
         rbp_val = s.solver.eval(s.regs.rbp, cast_to=int)
-        if rbp_val > buf_val:
-            return rbp_val - buf_val
+        off = rbp_val - buf_val if rbp_val > buf_val else None
+        # 合理性: 栈偏移 0 < off < 64KB; 垃圾值 (栈变量/未初始化) → None
+        if off is not None and 0 < off < 0x10000:
+            return off
         return None
     except Exception as e:
         log.warning("angr 缓冲求值失败 %s @0x%x: %s", os.path.basename(path), call_addr, e)

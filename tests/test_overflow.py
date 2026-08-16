@@ -174,3 +174,43 @@ class TestSemanticQueries:
         seq = [("lea", "rax, [rbp - 0x40]"), ("call", "0x20"), ("mov", "rsi, rax"), ("call", "0x10")]
         insns = self._mk(seq)
         assert _buf_stack_offset(insns, len(insns) - 1, "rsi") is None
+
+
+class TestPaddingPrecision:
+    """padding 用危险调用缓冲偏移 (非函数最大 lea) — vuln 类多 lea 场景"""
+
+    def _mk(self, insns):
+        return [_I(a, m, o) for a, (m, o) in enumerate(insns)]
+
+    def test_padding_uses_danger_buf_off(self):
+        """函数有 0x28 和 0x20 两个 lea, 危险 read 用 0x20 buf → padding 应 0x20+8"""
+        from intelpwn.core.analysis.overflow import _buf_stack_offset, _size_value
+        insns = self._mk([
+            ("lea", "rax, [rbp - 0x28]"),   # scanf 槽 (choice)
+            ("mov", "rdi, rax"),
+            ("call", "0x70"),                # scanf
+            ("mov", "edx, dword ptr [rbp - 0x24]"),  # size 栈变量 (非常量)
+            ("lea", "rax, [rbp - 0x20]"),    # read buf
+            ("mov", "rsi, rax"),
+            ("mov", "edi, 0"),
+            ("call", "0x60"),                # read
+        ])
+        buf_off = _buf_stack_offset(insns, 7, "rsi")
+        assert buf_off == 0x20, f"read buf 应 0x20: {buf_off}"
+        sz = _size_value(insns, 7, "rdx")
+        assert sz is None, "栈变量 size 应判未知 (非常量)"
+        # 端到端: 主流程 padding 用危险 buf 偏移 (0x20+8=40), 不是函数最大 lea (0x28+8=48)
+        from intelpwn.core.analysis.overflow import _analyze_overflow_from_insns
+        r = _analyze_overflow_from_insns(insns, 64, "x", plt_map={0x60: "read", 0x70: "scanf"})
+        assert r and r[0]["calculated_padding"] == 0x20 + 8, f"padding 应 40: {r}"
+
+    def test_padding_fallback_stack_size(self):
+        """危险调用无 buf 偏移 (未知) → stack_size 兜底"""
+        from intelpwn.core.analysis.overflow import _analyze_overflow_from_insns
+        insns = self._mk([
+            ("lea", "rax, [rbp - 0x40]"),
+            ("mov", "rdi, rax"),
+            ("call", "0x50"),   # gets (无界)
+        ])
+        r = _analyze_overflow_from_insns(insns, 64, "x", plt_map={0x50: "gets"})
+        assert r and r[0]["calculated_padding"] == 0x40 + 8, f"padding 应 72: {r}"

@@ -338,6 +338,7 @@ def _analyze_overflow_from_insns(insns, bits, path, func_bounds=None, plt_map=No
         stack_size = 0
         lea_insn = ""
         has_danger = False
+        danger_buf_off = None  # 危险调用的缓冲栈偏移 (padding 精确计算)
         danger_addr = ""
         danger_site = None
         danger_conf = "高"
@@ -435,12 +436,21 @@ def _analyze_overflow_from_insns(insns, bits, path, func_bounds=None, plt_map=No
                     has_danger = True
                     danger_addr = f"{callee} ({insn.op_str})"
                     danger_site = insn.address
+                    # 记录危险调用的缓冲栈偏移 (padding 精确计算的基础)
+                    if callee in bounded_inputs:
+                        danger_buf_off = buf_off
+                    elif callee in unbounded_writes:
+                        danger_buf_off = _buf_stack_offset(func_insns, idx, 'rdi') if bits == 64 else None
+                    elif callee == 'scanf':
+                        danger_buf_off = _buf_stack_offset(func_insns, idx, 'rdi') if bits == 64 else None
                     if arg_size is not None and arg_size > 0:
                         danger_addr += f" size={arg_size}"
                     danger_conf = conf
 
         if has_lea and has_danger:
-            padding = stack_size + (8 if bits == 64 else 4)
+            # padding = 危险调用缓冲偏移 + 帧指针宽度; 无法确定时用函数最大 lea 偏移兜底
+            base_off = danger_buf_off if (danger_buf_off or 0) > 0 else stack_size
+            padding = base_off + (8 if bits == 64 else 4)
             results.append({
                 "function": f_name,
                 "address": hex(f_start),
