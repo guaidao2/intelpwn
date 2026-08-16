@@ -21,7 +21,7 @@ fi
 if [ ! -f /tmp/ctc231 ]; then
     echo "[*] 用 2.31 libc 重新链接 challenge_tcache_dup (规避 __isoc23_scanf@2.38) ..."
     gcc -o /tmp/ctc231 challenges/challenge_tcache_dup.c -no-pie -fno-stack-protector \
-        -std=c11 -U_GNU_SOURCE \
+        -std=c11 -U_GNU_SOURCE -D_POSIX_C_SOURCE=200809L \
         -Xlinker -rpath -Xlinker "$L" \
         -Xlinker --dynamic-linker -Xlinker "$L/ld-2.31.so" \
         "$L/libc.so.6"

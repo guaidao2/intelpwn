@@ -58,6 +58,8 @@ pre { white-space: pre-wrap; word-break: break-all; }
 .dline.mark .m { color: var(--danger); font-weight: bold; }
 .dline.uaf { background: #3a2410; outline: 1px solid #e08a1e; }
 .dline.uaf .m { color: #e08a1e; font-weight: bold; }
+#cfg-detail .dline.uaf, #cfg-detail-callgraph .dline.uaf { background: #3a2410; outline: 1px solid #e08a1e; }
+#cfg-detail .dline.uaf .m, #cfg-detail-callgraph .dline.uaf .m { color: #e08a1e; font-weight: bold; }
 .dline.lea { color: var(--warn); }
 .dline.call { color: var(--accent); }
 
