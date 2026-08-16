@@ -56,6 +56,8 @@ pre { white-space: pre-wrap; word-break: break-all; }
 .dline .o { color: var(--fg); }
 .dline.mark { background: #3d1a1a; outline: 1px solid var(--danger); }
 .dline.mark .m { color: var(--danger); font-weight: bold; }
+.dline.uaf { background: #3a2410; outline: 1px solid #e08a1e; }
+.dline.uaf .m { color: #e08a1e; font-weight: bold; }
 .dline.lea { color: var(--warn); }
 .dline.call { color: var(--accent); }
 

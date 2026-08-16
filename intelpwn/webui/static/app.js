@@ -275,6 +275,7 @@ async function renderDisasm(f) {
     for (const line of d.lines) {
       const div = document.createElement("div");
       div.className = "dline" + (line.mark ? " mark" : "") +
+                      (line.uaf ? " uaf" : "") +
                       (line.lea_stack ? " lea" : "") +
                       (line.call ? " call" : "");
       div.innerHTML = `<span class="a">0x${line.addr.toString(16)}</span>` +
@@ -458,7 +459,7 @@ async function renderCallGraph() {
         det.appendChild(h);
         for (const l of d.lines) {
           const row = document.createElement("div");
-          row.className = "dline" + (l.mark ? " mark" : "");
+          row.className = "dline" + (l.mark ? " mark" : "") + (l.uaf ? " uaf" : "");
           row.innerHTML = `<span class="a">0x${l.addr.toString(16)}</span>` +
                           `<span class="m">${esc(l.mnemonic)}</span>` +
                           `<span class="o">${esc(l.op_str)}</span>` +

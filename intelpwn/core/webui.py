@@ -274,6 +274,17 @@ class _Handler(BaseHTTPRequestHandler):
                     break
             except ValueError:
                 pass
+        # 堆 UAF 链的 free/use 调用点 → 反汇编红标 (像溢出题 mark)
+        uaf_mark = set()
+        try:
+            for ch in (self.results.get("heap_analysis") or {}).get("uaf_chains", []):
+                for k in ("free_addr", "use_addr"):
+                    try:
+                        uaf_mark.add(int(ch.get(k, "0x0"), 16))
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            pass
         pre = _get_disas(self.binary)
         if not pre:
             return {"error": "反汇编失败"}
@@ -288,7 +299,9 @@ class _Handler(BaseHTTPRequestHandler):
                 "addr": i.address,
                 "mnemonic": i.mnemonic,
                 "op_str": i.op_str,
-                "mark": i.address == _vuln_call_site(entry) if entry else False,
+                "mark": (i.address == _vuln_call_site(entry) if entry else False)
+                        or i.address in uaf_mark,
+                "uaf": i.address in uaf_mark and not (entry and i.address == _vuln_call_site(entry)),
                 "lea_stack": i.mnemonic == 'lea' and ('rbp' in i.op_str or 'ebp' in i.op_str),
                 "call": i.mnemonic == 'call',
             })
