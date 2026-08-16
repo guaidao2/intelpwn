@@ -133,7 +133,7 @@ python -m pytest tests/ -q          # 当前 158 用例
 4. 提交信息遵循现有风格（`feat/fix/refactor/docs:` 前缀 + 中文要点）。
 5. 推送前确认 README 同步（§8）。
 
-> 推送说明：本仓库 `main` 分支推 GitHub。
+> 推送说明：本仓库 `main` 分支正常推送 GitHub。
 
 ## 10. 安全与伦理
 
