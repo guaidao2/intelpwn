@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/guaidao2/intelpwn/blob/main/schema/intelpwn.schema.json",
-  "title": "IntelPwn JSON 输出 schema v1.1",
+  "title": "IntelPwn JSON 输出 schema v2.0",
   "type": "object",
   "required": ["schema_version", "file", "path", "protections", "overflow", "format_string", "summary"],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.1" },
+    "schema_version": { "type": "string", "const": "2.0" },
     "file": { "type": ["string", "null"] },
     "path": { "type": ["string", "null"] },
     "protections": {

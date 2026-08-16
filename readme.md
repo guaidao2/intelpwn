@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://img.shields.io/badge/IntelPwn-v1.1-blue?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/IntelPwn-v2.0-blue?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="license">
   <img src="https://img.shields.io/badge/python-3.10+-orange?style=flat-square" alt="python">
   <img src="https://img.shields.io/badge/CTF-Pwn-red?style=flat-square" alt="ctf">
@@ -74,7 +74,7 @@
 ### 输出格式
 
 - **终端报告**: 中文报告 (漏洞汇总 + 保护状态 + 栈布局 + ROP 列表 + angr 符号执行 + 修复建议)
-- **JSON 输出**: `--json` 参数 → schema v1.1 (见 `schema/intelpwn.schema.json`), 可管道给 jq / CI
+- **JSON 输出**: `--json` 参数 → schema v2.0 (见 `schema/intelpwn.schema.json`), 可管道给 jq / CI
 - **批量扫描**: `--dir <目录>` 扫描目录下所有 ELF, 输出汇总表或 JSON 数组
 - **Web 可视化**: `--web` 参数 → 本地交互界面 (总览 + 反汇编三级注释 + CFG 图, 见下节)
 
@@ -116,7 +116,7 @@ python3 intelpwn.py analyze <binary> --libc /usr/lib/x86_64-linux-gnu/libc.so.6
 # 远程利用
 python3 intelpwn.py analyze <binary> --libc <path> --remote 10.0.0.1:1337
 
-# JSON 输出 (机器可读, schema v1.1)
+# JSON 输出 (机器可读, schema v2.0)
 python3 intelpwn.py analyze <binary> --json
 
 # 批量扫描目录下所有 ELF
@@ -198,7 +198,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 │   ├── findings.py                  漏洞总结 + 策略生成
 │   ├── menu.py                      菜单交互识别 (scanf 数字菜单 → options 映射, 通用基础设施)
 │   └── angr_analysis.py             angr 插件 (主动发现/可达性/padding, 自注册)
-├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v1.1)
+├── intelpwn/core/report.py          中文报告 + JSON 输出 (schema v2.0)
 ├── intelpwn/core/exploit.py         exploit 模板生成器 (注册表驱动, 插件可挂模板)
 ├── intelpwn/core/verify.py          定点验证 (cyclic 偏移提取)
 ├── intelpwn/core/cross_validate.py  静态 vs 动态交叉验证 (确认/未复现/动态发现/canary拦截)
@@ -233,7 +233,7 @@ analyze_all()
   └─ findings.py         → 综合漏洞总结
   │
   ▼
-report.py               → 中文报告 / --json 输出 (schema v1.1)
+report.py               → 中文报告 / --json 输出 (schema v2.0)
 exploit.py              → 模板自动选择 (ret2win/ret2libc/ret2dlresolve/SROP/shellcode/fmtstr/...)
 ```
 

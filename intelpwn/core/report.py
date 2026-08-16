@@ -508,7 +508,7 @@ def print_json_summary(results: dict) -> str:
         return v
 
     summary = {
-        "schema_version": "1.1",
+        "schema_version": "2.0",
         "file": results.get("file"),
         "path": results.get("path"),
         "protections": {
