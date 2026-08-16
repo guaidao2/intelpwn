@@ -299,6 +299,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _json(self, obj):
+        if isinstance(obj, dict) and "_shared" in obj:
+            # 黑板缓存 (capstone insns 等不可 JSON 序列化) 不进 API 响应
+            obj = {k: v for k, v in obj.items() if k != "_shared"}
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")

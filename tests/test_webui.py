@@ -92,6 +92,17 @@ class TestWebUI:
         st, _ = _get(port, "/api/disasm/0x999999")
         assert st in (200, 400)
 
+    def test_api_report_with_shared_blackboard(self):
+        """analyze_all 真实 results 含黑板缓存 _shared (capstone insns 不可序列化) — /api/report 不得 500"""
+        results = {"overflow": [], "path": BIN, "_shared": {"insns": ["<capstone object>"], "func_bounds": []}}
+        port = 5101
+        _start_server(results, port)
+        st, body = _get(port, "/api/report")
+        assert st == 200, f"/api/report 应 200, 实际 {st}: {body[:100]}"
+        data = json.loads(body)
+        assert "_shared" not in data, "_shared 不应出现在 API 响应"
+        assert data["path"] == BIN
+
 
 def test_sym_map_for_plt_resolution():
     """PLT stub 解析: read@plt 应在 sym_map 中 (symtab 无此条目, 经 _build_plt_map 解析)"""
