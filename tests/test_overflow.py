@@ -131,3 +131,46 @@ class TestScanfVaddrToOffset:
         win = [_I(0, "mov", f"dword ptr [esp], 0x{vaddr:x}"), _I(1, "call", "scanf")]
         r = _resolve_scanf_format("challenges/challenge_x86_vuln", win, 32)
         assert "Input" in r, f"应解析出 .rodata 字符串, 实际 {r!r}"
+
+
+class TestSemanticQueries:
+    """语义查询层 (v2): 定义-使用链数据流 — 破固定窗口, 追重排/长链"""
+
+    def _mk(self, insns):
+        return [_I(a, m, o) for a, (m, o) in enumerate(insns)]
+
+    def test_buf_chain_via_mov(self):
+        """lea rax,[rbp-0x40] → (隔 150 条指令) → mov rsi,rax → call: 长链仍追到"""
+        from intelpwn.core.analysis.overflow import _buf_stack_offset
+        seq = [("lea", "rax, [rbp - 0x40]")] + [("nop", "")] * 150 + [("mov", "rsi, rax"), ("call", "0x10")]
+        insns = self._mk(seq)
+        assert _buf_stack_offset(insns, len(insns) - 1, "rsi") == 0x40
+
+    def test_size_chain_reordered(self):
+        """编译器重排: mov edx,0x100 在函数头, 中间插 50 条, 调用前才用"""
+        from intelpwn.core.analysis.overflow import _size_value
+        seq = [("mov", "edx, 0x100")] + [("nop", "")] * 50 + [("mov", "rdi, rax"), ("call", "0x10")]
+        insns = self._mk(seq)
+        assert _size_value(insns, len(insns) - 1, "rdx") == 0x100
+
+    def test_multi_hop_mov_chain(self):
+        """mov eax,ebx → mov edx,eax → call: 两级传播"""
+        from intelpwn.core.analysis.overflow import _size_value
+        seq = [("mov", "ebx, 0x40"), ("mov", "eax, ebx"), ("mov", "edx, eax"),
+               ("mov", "rsi, rax"), ("call", "0x10")]
+        insns = self._mk(seq)
+        assert _size_value(insns, len(insns) - 1, "rdx") == 0x40
+
+    def test_non_stack_buf_returns_none(self):
+        """缓冲来自 [rip+chunks] (堆/全局) → 非栈 → None"""
+        from intelpwn.core.analysis.overflow import _buf_stack_offset
+        seq = [("mov", "rsi, qword ptr [rip + 0x2000]"), ("call", "0x10")]
+        insns = self._mk(seq)
+        assert _buf_stack_offset(insns, len(insns) - 1, "rsi") is None
+
+    def test_call_breaks_backtrack(self):
+        """跨调用回溯截断: lea 在 call 之前 → 不误连"""
+        from intelpwn.core.analysis.overflow import _buf_stack_offset
+        seq = [("lea", "rax, [rbp - 0x40]"), ("call", "0x20"), ("mov", "rsi, rax"), ("call", "0x10")]
+        insns = self._mk(seq)
+        assert _buf_stack_offset(insns, len(insns) - 1, "rsi") is None

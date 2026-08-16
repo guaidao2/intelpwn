@@ -38,7 +38,8 @@ def disassemble_text(path: str):
 
 
 def analyze_assembly_overflow(path: str, insns=None, bits=None,
-                              func_bounds=None, plt_map=None) -> list:
+                              func_bounds=None, plt_map=None,
+                              semantic_mode: str = "throttled") -> list:
     """反汇编 .text 段, 找 lea + read/gets/scanf 模式 → 算 padding
 
     Args:
@@ -47,6 +48,7 @@ def analyze_assembly_overflow(path: str, insns=None, bits=None,
         bits: 可选预检测位数
         func_bounds: 可选黑板函数边界缓存 (func_bounds/plt_map 复用避免重扫)
         plt_map: 可选黑板 PLT 地址→名称缓存
+        semantic_mode: angr 语义兜底 — throttled(默认, 节流+大小限制) / force(纯 angr)
     """
     if insns is None or bits is None:
         try:
@@ -55,7 +57,7 @@ def analyze_assembly_overflow(path: str, insns=None, bits=None,
         except Exception:
             return []
     return _analyze_overflow_from_insns(insns, bits, path, func_bounds=func_bounds,
-                                        plt_map=plt_map)
+                                        plt_map=plt_map, semantic_mode=semantic_mode)
 
 
 def _analyze_overflow_inner(elf, path: str) -> list:
@@ -78,6 +80,131 @@ def _analyze_overflow_inner(elf, path: str) -> list:
     base = text['sh_addr']
     insns = list(md.disasm(data, base))
     return _analyze_overflow_from_insns(insns, bits, path)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 语义查询层 (v2): 定义-使用链数据流, 替代脆弱的前 N 条窗口正则匹配
+#
+# 规则从"匹配指令"升级为"匹配语义关系":
+#   _buf_stack_offset(调用点, 缓冲寄存器) → 栈偏移 int | None(非栈) | UNKNOWN
+#   _size_value(调用点, 大小寄存器)       → 常量 int | None | UNKNOWN
+# 回溯整个函数 (最多 BACKTRACK_LIMIT 条, 不锁死窗口), 追 mov/lea 链式传播,
+# 编译器重排/长链都追得到; 分支/调用处截断该路径.
+# ══════════════════════════════════════════════════════════════════
+
+UNKNOWN = None  # 语义查询结果: None = 无法确定 (供 angr 兜底/保守处理)
+
+_BACKTRACK_LIMIT = 200  # 单次查询最多回溯指令数 (防超大函数 O(N²))
+
+
+def _reg_family(reg: str) -> str:
+    """寄存器族: rax/r/eax/ax/al → rax (用于跨宽度传播)"""
+    r = reg.lower()
+    for base in ('rax', 'rbx', 'rcx', 'rdx', 'rsi', 'rdi', 'rbp', 'rsp',
+                 'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15'):
+        if r == base or r.startswith(base):
+            return base
+        if base.startswith('r') and r in ('e' + base[1:],):
+            return base
+    return reg.lower()
+
+
+def _parse_lea_stack_offset(op_str: str):
+    """lea reg, [rbp - 0x40] → (reg, 0x40); [rbp+8]/[rbp-8] 符号化; 非 rbp 基址 → None"""
+    m = re.match(r'^\s*(\S+),\s*\[(?:r|e)?bp\s*([+-])\s*(0x[0-9a-fA-F]+|\d+)\]', op_str)
+    if not m:
+        return None
+    reg, sign, val = m.group(1), m.group(2), int(m.group(3), 16)
+    off = val if sign == '-' else -val
+    # 负位移 (栈内局部) 才是缓冲; [rbp+8] 是入参, 不是栈缓冲
+    if off <= 0:
+        return None
+    return reg, off
+
+
+def _parse_mov_const(op_str: str):
+    """mov reg, imm → (reg, int); mov reg, reg → (reg, src_reg); 其他 → None"""
+    parts = op_str.split(',')
+    if len(parts) != 2:
+        return None
+    dst, src = parts[0].strip(), parts[1].strip()
+    try:
+        if src.startswith('0x') or src.isdigit():
+            return dst, int(src, 16)
+    except ValueError:
+        pass
+    if re.match(r'^[er]?[a-ds]?x?[0-9]*$', src) or re.match(r'^(r\d+|[er][abcd]x|[er]sp|[er]bp|[er]si|[er]di)$', src):
+        return dst, src  # 寄存器传播
+    return None
+
+
+def _buf_stack_offset(func_insns, call_idx: int, buf_reg: str, limit: int = _BACKTRACK_LIMIT):
+    """语义查询: 回溯 buf_reg 的定义链, 返回栈偏移 (lea [rbp-X]) 或 None (非栈/无法确定).
+
+    追 mov 链式传播 (lea rax,[rbp-0x40] → mov rsi,rax → 调用), 编译器重排
+    (lea 提前几百条) 也追得到 — 与旧窗口正则的核心差异。
+    """
+    target = _reg_family(buf_reg)
+    for k in range(call_idx - 1, max(-1, call_idx - limit - 1), -1):
+        insn = func_insns[k]
+        m, ops = insn.mnemonic, insn.op_str
+        if m in ('call', 'jmp', 'ret'):
+            break  # 函数调用/跳转截断路径 (跨函数数据流不属于本函数)
+        if m == 'lea':
+            r = _parse_lea_stack_offset(ops)
+            if r:
+                dst, off = r
+                if _reg_family(dst) == target:
+                    return off
+                continue  # lea 其他寄存器 → 不影响 target
+        if m == 'mov':
+            r = _parse_mov_const(ops)
+            if r:
+                dst, src = r
+                if isinstance(src, int):
+                    if _reg_family(dst) == target:
+                        return 0 if src == 0 else None  # mov target, imm: 常数非栈
+                    continue
+                # mov dst, src (寄存器传播)
+                if _reg_family(dst) == target:
+                    target = _reg_family(src)  # 沿源寄存器继续回溯
+        # 其他指令 (add/sub/算术) 写到 target → 值不再纯 → 无法确定
+        if m in ('add', 'sub', 'xor', 'imul', 'and', 'or', 'shl', 'shr', 'inc', 'dec'):
+            dst = ops.split(',')[0].strip() if ',' in ops else ops.strip()
+            if _reg_family(dst) == target:
+                return None
+    return None
+
+
+def _size_value(func_insns, call_idx: int, size_reg: str, limit: int = _BACKTRACK_LIMIT):
+    """语义查询: 回溯 size_reg 定义链 → 常量大小 (int) 或 None (非常量/无法确定)."""
+    target = _reg_family(size_reg)
+    for k in range(call_idx - 1, max(-1, call_idx - limit - 1), -1):
+        insn = func_insns[k]
+        m, ops = insn.mnemonic, insn.op_str
+        if m in ('call', 'jmp', 'ret'):
+            break
+        if m == 'mov':
+            r = _parse_mov_const(ops)
+            if r:
+                dst, src = r
+                if isinstance(src, int):
+                    if _reg_family(dst) == target:
+                        return src
+                    continue
+                if _reg_family(dst) == target:
+                    target = _reg_family(src)  # mov target, reg → 沿源继续
+        elif m == 'lea':
+            r = _parse_lea_stack_offset(ops)
+            if r and _reg_family(r[0]) == target:
+                return None  # lea 栈地址当大小 → 非常量
+        elif m in ('add', 'sub', 'xor', 'imul', 'and', 'or', 'shl', 'shr', 'inc', 'dec'):
+            dst = ops.split(',')[0].strip() if ',' in ops else ops.strip()
+            if _reg_family(dst) == target:
+                # mov edx, 0x100; sub edx, 8 → 非常量但可沿源继续? 保守: 判未知
+                # (简单 add/sub 立即数可精化, 首版保守)
+                return None
+    return None
 
 
 def _buf_reg_on_stack(func_insns, call_idx: int, buf_reg: str, window: int = 30) -> bool:
@@ -138,7 +265,8 @@ def _stack_buf_passed(func_insns, call_idx: int, window: int = 30) -> bool:
     return False
 
 
-def _analyze_overflow_from_insns(insns, bits, path, func_bounds=None, plt_map=None) -> list:
+def _analyze_overflow_from_insns(insns, bits, path, func_bounds=None, plt_map=None,
+                                 semantic_mode: str = "throttled") -> list:
     """反汇编结果分析 — 与反汇编解耦 (func_bounds/plt_map 可传黑板缓存复用)"""
     results = []
 
@@ -248,24 +376,39 @@ def _analyze_overflow_from_insns(insns, bits, path, func_bounds=None, plt_map=No
                     buf_reg = 'rsi' if callee in ('read', 'recv') else 'rdi'
                     if bits == 32:
                         buf_reg = 'esi' if buf_reg == 'rsi' else 'edi'
-                    # 大小参数常通过 mov reg, imm 或 mov reg, [reg+disp] 传入
-                    for prev in window:
-                        if prev.mnemonic == 'mov':
-                            parts = prev.op_str.split(',')
-                            if len(parts) >= 2 and parts[0].strip() in (reg64, reg32):
-                                try:
-                                    arg_size = int(parts[1].strip(), 16)
-                                    break
-                                except ValueError:
-                                    pass
-                    # 目标必须确实指向栈 (lea rbp-X 经 mov 传播), 否则是堆/全局写, 不是栈溢出
+                    # 语义查询 (v2): 回溯定义链求 缓冲栈偏移 + 常量大小, 破固定窗口
+                    size_reg = reg64 if bits == 64 else reg32
+                    # force 模式: 纯 angr 符号执行 (跳过轻量, 彻底但慢)
+                    if semantic_mode == "force":
+                        try:
+                            from intelpwn.core.analysis.semantic_angr import (
+                                angr_eval_size, angr_eval_buf_offset)
+                            buf_off = angr_eval_buf_offset(path, f_start, insn.address,
+                                                           buf_reg, bits, mode="force")
+                            arg_size = angr_eval_size(path, f_start, insn.address,
+                                                      size_reg, bits, mode="force")
+                        except Exception:
+                            buf_off = _buf_stack_offset(func_insns, idx, buf_reg)
+                            arg_size = _size_value(func_insns, idx, size_reg)
+                    else:
+                        buf_off = _buf_stack_offset(func_insns, idx, buf_reg)
+                        arg_size = _size_value(func_insns, idx, size_reg)
+                        # angr 兜底: 轻量判未知 (且大小非常量) 时符号执行求值
+                        if arg_size is None:
+                            try:
+                                from intelpwn.core.analysis.semantic_angr import angr_eval_size
+                                arg_size = angr_eval_size(path, f_start, insn.address,
+                                                          size_reg, bits, mode="throttled")
+                            except Exception:
+                                pass
                     if bits == 32:
-                        # 32 位 cdecl: 参数在栈上, 缓冲地址经压栈传递
+                        # 32 位 cdecl: 参数在栈上, 缓冲经 push/mov[esp] 传递 — 用栈传递检测
                         stack_linked = _stack_buf_passed(func_insns, idx)
                     else:
-                        stack_linked = _buf_reg_on_stack(func_insns, idx, buf_reg)
-                    if arg_size > 0:
-                        truly_dangerous = stack_linked and arg_size > stack_size + 16
+                        stack_linked = buf_off is not None
+                    if arg_size is not None and arg_size > 0:
+                        # 大小常量: 需同时知道缓冲偏移才能比 (栈缓冲 or 未知)
+                        truly_dangerous = stack_linked and arg_size > (buf_off or 0) + 16
                     else:
                         # 大小无法静态确定 → 仅当目标确认在栈上才保守报险
                         truly_dangerous = stack_linked
@@ -275,10 +418,9 @@ def _analyze_overflow_from_insns(insns, bits, path, func_bounds=None, plt_map=No
                 elif callee in unbounded_writes:
                     # 无界写: 第一个参数 (rdi/edi) 必须指向栈缓冲
                     if bits == 32:
-                        # 32 位 cdecl: 缓冲地址经 lea [ebp-X] 装载后压栈
                         truly_dangerous = _stack_buf_passed(func_insns, idx)
                     else:
-                        truly_dangerous = _buf_reg_on_stack(func_insns, idx, 'rdi')
+                        truly_dangerous = _buf_stack_offset(func_insns, idx, 'rdi') is not None
 
                 elif callee == 'scanf':
                     # 格式串含无宽度 %s → 危险; 否则 (如 %d/%x) 不是溢出源
@@ -287,13 +429,13 @@ def _analyze_overflow_from_insns(insns, bits, path, func_bounds=None, plt_map=No
                         if bits == 32:
                             truly_dangerous = _stack_buf_passed(func_insns, idx)
                         else:
-                            truly_dangerous = _buf_reg_on_stack(func_insns, idx, 'rdi')
+                            truly_dangerous = _buf_stack_offset(func_insns, idx, 'rdi') is not None
 
                 if truly_dangerous:
                     has_danger = True
                     danger_addr = f"{callee} ({insn.op_str})"
                     danger_site = insn.address
-                    if arg_size > 0:
+                    if arg_size is not None and arg_size > 0:
                         danger_addr += f" size={arg_size}"
                     danger_conf = conf
 

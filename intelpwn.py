@@ -82,7 +82,7 @@ def cmd_analyze_dir(args):
         try:
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                results = analyze_all(p, args.libc)
+                results = analyze_all(p, args.libc, semantic_mode=args.semantic)
         except Exception as e:
             print(f"{Colors.RED}[错误]{Colors.END} {os.path.basename(p)}: {e}")
             continue
@@ -124,7 +124,7 @@ def cmd_analyze(args):
         logging.getLogger('pwnlib').setLevel(logging.ERROR)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            results = analyze_all(path, args.libc)
+            results = analyze_all(path, args.libc, semantic_mode=args.semantic)
             # --verify: 动态验证 + 交叉验证也纳入 JSON
             verify_on = bool(getattr(args, 'verify', False)) and not getattr(args, 'no_verify', False)
             if args.remote:
@@ -139,7 +139,7 @@ def cmd_analyze(args):
         return
 
     print_section_header(f"分析目标: {os.path.basename(path)}")
-    results = analyze_all(path, args.libc)
+    results = analyze_all(path, args.libc, semantic_mode=args.semantic)
 
     # 动态验证 + 交叉验证 (--verify 默认关; --remote/不可执行时自动跳过)
     verify_on = bool(getattr(args, 'verify', False)) and not getattr(args, 'no_verify', False)
@@ -216,6 +216,10 @@ def main():
                    help="可视化服务监听地址 (默认 0.0.0.0; 敌对网络可锁 127.0.0.1)")
     p.add_argument("--json", action="store_true", help="以 JSON 格式输出结果")
     p.add_argument("--no-exploit", action="store_true", help="不自动生成 exploit 脚本")
+    p.add_argument("--semantic", choices=["throttled", "force"],
+                   default="throttled",
+                   help="语义分析模式: throttled(默认, 轻量数据流+angr 节流兜底) / "
+                        "force(纯 angr 符号执行, 慢但更彻底)")
 
     p = sub.add_parser("verify", help="定点验证 = analyze --verify (静态+动态+交叉)")
     p.add_argument("binary", help="目标二进制路径")

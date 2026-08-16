@@ -131,16 +131,23 @@ def _build_shared_blackboard(path: str, insns, bits):
     return shared
 
 
-def analyze_all(path: str, libc_path: str = None) -> dict:
+def analyze_all(path: str, libc_path: str = None, semantic_mode: str = "throttled") -> dict:
     """全量分析入口
 
     Args:
         path: 二进制路径
         libc_path: 指定 libc 路径 (若不指定则自动检测)
+        semantic_mode: angr 语义兜底 — throttled(默认) / force(纯 angr)
 
     Returns:
         包含英文键名的分析结果 dict
     """
+    # 每次 analyze 重置 angr 节流预算 (默认模式每二进制最多 _ANG_MAX_CALLS 次)
+    try:
+        from intelpwn.core.analysis.semantic_angr import reset_throttle
+        reset_throttle()
+    except Exception:
+        pass
     print_info("开始全量分析...")
 
     result = {"file": os.path.basename(path), "path": os.path.abspath(path)}
@@ -163,7 +170,8 @@ def analyze_all(path: str, libc_path: str = None) -> dict:
     print_info("反汇编分析栈溢出...")
     asm_results = analyze_assembly_overflow(path, insns=shared_insns, bits=shared_bits,
                                             func_bounds=_shared.get("func_bounds"),
-                                            plt_map=_shared.get("plt_map"))
+                                            plt_map=_shared.get("plt_map"),
+                                            semantic_mode=semantic_mode)
     result["overflow"] = asm_results
 
     print_info("检测格式化字符串...")
