@@ -36,13 +36,13 @@
 | **x86 32 位支持** | cdecl 栈传参检测 (lea [ebp-X] → push/mov[esp]), scanf %s 格式串 vaddr→offset 映射, 三重 padding 验证自适应 (eip/esp/ebp + p32) | 全链路覆盖 |
 | **静态链接专项** | libc 内置符号识别 (system/execve/binsh 固定地址), 危险函数符号表 fallback (静态链接无 PLT 也能识别 gets/read), fmtstr 无 GOT 覆写返回地址路径 | 能力包 |
 | **复杂 ROP 组装** | ret2csu (__libc_csu_init) 识别 + x86 pop;pop;ret 多参链 | 链可行性分析 |
-| **堆助手** | glibc 版本识别 + tcache/safe-linking/__free_hook 行为表 (按版本给攻击面) | 独立模块 |
+| **堆助手** | glibc 版本识别 + tcache/safe-linking/__free_hook 行为表 (按版本给攻击面) + **tcache poisoning 版本感知原语** (GOT→system 完整路径 / 2.34+ 现代路径标注) | 独立模块 |
 | **BSS 可写区** | ELF 符号表扫描大尺寸 BSS 符号 | 用于 shellcode 存储 |
 | **CFG 复杂度** | 指令流直接计数边和节点 (去 NetworkX) | 5ms vs 500ms |
 | **堆漏洞线索** | 同函数多 free (double-free) / malloc 大小算术运算 (整数溢出) / 循环内 free (UAF 场景) | 启发式提示 |
 | **angr 符号执行** | 主动发现: 全量枚举危险调用点 (可达性 + 栈目标 + 大小 taint), 静态漏检的 strcpy 等无界写也能发现并算 padding; 溢出点符号化 padding 交叉确认 | 可选插件 |
 | **汇编自动注释** | 三级注释引擎: 漏洞链(红, 危险输入点/可溢出字节数/返回地址改写点, 来自分析结论) · 风险提示(黄, syscall 号/canary/敏感函数, 规则猜测) · 语义标注(灰, 序言/栈帧/PLT 调用解析); 供 `--web` 反汇编视图 | 规则引擎 |
-| **菜单交互识别** | scanf 数字菜单双通道识别 (rodata "N. 名称" 菜单项 + cmp/je 分支链) → options 映射表 {选项: {handler, 参数结构}}; 伪菜单防护 (仅明确触发漏洞函数的选项才自动交互) | 通用基础设施 |
+| **菜单交互识别** | scanf 数字菜单双通道识别 (rodata "N. 名称" 菜单项 + cmp/je 分支链) → options 映射表 {选项: {handler, 参数结构}}; **溢出题匹配漏洞函数触发注入, 堆题菜单也识别 (options 供堆模板)** | 通用基础设施 |
 | **利用策略生成** | 基于保护状态 + 可用函数 + ROP → 自动推导方案 | 多种策略 |
 
 ### Exploit 生成
@@ -59,7 +59,7 @@
 | **shellcode 注入** (NX 关闭) | `gen_shellcode` | 无 jmp_rsp gadget 时不生成断路径 |
 | **Canary 爆破 + ret2win** | `gen_canary_ret2win` | 4/8 字节自适应; 支持 `--remote` fork 服务器 |
 | **格式化字符串** (GOT 覆写) | `gen_fmtstr` | 有 puts@got+system@plt 时生成实际 payload |
-| **tcache dup** (堆) | `gen_tcache_dup` | 原语骨架; glibc<2.34 目标 __free_hook, >=2.34 自动标注 tls_dtor_list 现代路径 |
+| **tcache dup** (堆) | `gen_tcache_dup` | **版本感知完整原语**: 菜单题自动交互 (add/delete/show/edit 选项号) + safe-linking 泄露 + GOT 覆写; glibc<2.34 完整可打, >=2.34 标注 tls_dtor_list/FSOP 现代路径 |
 | **one_gadget 自动定位** | ret2libc 内嵌 | 有 one_gadget 工具时自动填充偏移 |
 | **ROP 骨架** (无自动路径时) | — | 输出 gadget 列表 + 推荐工具 |
 
@@ -151,7 +151,7 @@ API: `GET /api/functions` `/api/disasm/<addr>` `/api/cfg/<addr>` `/api/report` (
 ### 运行测试
 
 ```bash
-# 单元测试 (155 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
+# 单元测试 (162 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
 python3 -m pytest tests/ -v
 ```
 
@@ -172,6 +172,7 @@ python3 -m pytest tests/ -v
 | `challenge_srop` | NX, NoCanary, NoPIE | 栈溢出 72 padding | SROP (实测打穿) |
 | `challenge_ret2dlresolve` | NX, NoCanary, NoPIE | 栈溢出 72 padding | ret2dlresolve (glibc<2.40) |
 | `challenge_tcache` | NX, NoCanary, NoPIE | UAF + tcache poisoning | 手动 exploit (现代 glibc 实测打穿) |
+| `challenge_tcache_dup` | NX, NoCanary, NoPIE | UAF + 菜单 + safe-linking 泄露 | tcache poisoning 完整原语 (版本感知) |
 | `challenge_angr_hidden` | NX, NoCanary, NoPIE | 子函数 strcpy 栈溢出 | angr 主动发现 (静态漏检) |
 | `challenge_x86_vuln` | x86 32 位, NX, NoCanary, NoPIE | gets 栈溢出 52 padding | ret2win (实测打穿) / ret2system (32 位栈传参) |
 | `challenge_static_vuln` | 静态链接, NX, NoCanary, NoPIE | gets 栈溢出 72 padding | static_libc 符号识别 + 静态 ret2system |
@@ -207,7 +208,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
 ├── challenges/                      14 道 CTF 练习题 (含 32 位 + 静态链接)
-├── tests/                           155 个单元测试
+├── tests/                           162 个单元测试
 ├── schema/intelpwn.schema.json      JSON 输出 schema
 └── install.sh                       依赖安装 (apt + 隔离 venv)
 ```
@@ -303,7 +304,7 @@ register_exploit_template("my_exploit", predicate, gen, priority=5)
 | 符号执行验证 | 支持 (angr 插件) | 不支持 | 不支持 | 不支持 |
 | 批量扫描 + JSON | 支持 (--dir + schema) | 不支持 | 不支持 | 不支持 |
 | 中文报告 | 支持 | 不支持 | 不支持 | 不支持 |
-| 单元测试 | 155 用例 | - | - | - |
+| 单元测试 | 162 用例 | - | - | - |
 
 ---
 
