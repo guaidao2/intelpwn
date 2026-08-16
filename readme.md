@@ -27,7 +27,8 @@
 
 | 检测项 | 方法 | 说明 |
 |---|---|---|
-| **栈缓冲区溢出** | capstone 反汇编: 有界读 (read/fgets/memcpy/strncpy/snprintf) 比大小, 无界写 (gets/strcpy/sprintf/strcat) 看目标地址 | 双重判定 + 置信度 |
+| **栈缓冲区溢出** | **语义层 v2 (定义-使用链数据流)**: 有界读 (read/fgets/memcpy/strncpy/snprintf) 回溯大小定义链 vs 缓冲栈偏移比较, 无界写 (gets/strcpy/sprintf/strcat) 看目标地址; 破固定窗口, 编译器重排/长链不漏 | 双重判定 + 置信度 |
+| **angr 语义兜底** | 轻量判"未知"时符号执行求值 (节流 3 次/analyze + 500KB 上限防爆) — `--semantic=force` 强制纯 angr | 疑难场景补充 |
 | **scanf 精确判定** | 解析格式串: 仅无宽度 %s 判险, %d/%x 不误报 | 消除旧版无条件误报 |
 | **格式化字符串** | 静态 + 黑盒, 合并 4 批加速; **无 printf 族直接排除 (防菜单回显误判)** | 偏移自动定位 |
 | **安全保护** | Canary / NX / PIE / RELRO / RWX 段 / 静态链接 | 带风险评级 |
@@ -130,6 +131,9 @@ python3 intelpwn.py analyze <binary> --no-exploit
 
 # 可视化分析 (本地 web 界面: 总览 + 反汇编三级注释 + 交互 CFG 图)
 python3 intelpwn.py analyze <binary> --web
+
+# 语义分析模式: 默认轻量数据流 + angr 节流兜底; force = 纯 angr 符号执行 (慢但更彻底)
+python3 intelpwn.py analyze <binary> --semantic=force
 # 默认监听 0.0.0.0:5000 (Kali VM 场景宿主机可访问); 可指定端口/锁定本机
 python3 intelpwn.py analyze <binary> --web --web-port 9000 --web-host 127.0.0.1
 ```
@@ -151,7 +155,7 @@ API: `GET /api/functions` `/api/disasm/<addr>` `/api/cfg/<addr>` `/api/report` (
 ### 运行测试
 
 ```bash
-# 单元测试 (162 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
+# 单元测试 (177 个用例; Windows 上缺 objdump/readelf 的用例自动跳过)
 python3 -m pytest tests/ -v
 ```
 
@@ -189,7 +193,8 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 │   ├── __init__.py                  analyze_all() 编排器 + register_analyzer() + 黑板缓存物化 (_shared)
 │   ├── protections.py               checksec/readelf 保护分析
 │   ├── plt.py                       PLT/GOT 扫描
-│   ├── overflow.py                  capstone 反汇编 → 栈溢出检测 (有界/无界双判定)
+│   ├── overflow.py                  capstone 反汇编 → 栈溢出检测 (语义层 v2 定义-使用链 + angr 兜底)
+│   ├── semantic_angr.py             angr 语义兜底 (懒加载/节流/纯 angr 模式)
 │   ├── fmtstr.py                    格式化字符串 (静态+黑盒)
 │   ├── rop.py                       capstone 定向 ROP + 链分析
 │   ├── bss.py                       BSS 符号扫描
@@ -208,7 +213,7 @@ intelpwn.py                          CLI 入口 (含 venv 垫片)
 ├── intelpwn/utils/binary.py         工具函数 (open_elf, run, checksec...)
 ├── intelpwn/utils/output.py         终端输出样式
 ├── challenges/                      14 道 CTF 练习题 (含 32 位 + 静态链接)
-├── tests/                           162 个单元测试
+├── tests/                           177 个单元测试
 ├── schema/intelpwn.schema.json      JSON 输出 schema
 └── install.sh                       依赖安装 (apt + 隔离 venv)
 ```
@@ -224,7 +229,7 @@ analyze_all()
   ├─ protections.py      → 保护状态 + 风险评级
   ├─ plt.py              → PLT/GOT 函数表
   ├─ disassemble_text()  ← 只反汇编一次, 共享给 overflow + fmtstr + rop
-  ├─ overflow.py         → 栈溢出检测 + padding 计算 (有界读/无界写双判定)
+  ├─ overflow.py         → 语义层 v2 栈溢出检测 (定义-使用链数据流 + angr 兜底)
   ├─ fmtstr.py           → 格式化字符串 (静态分析 + 4 批黑盒)
   ├─ rop.py              → capstone 定向扫描 + pwntools 回退
   ├─ bss.py              → BSS 可写符号
@@ -304,7 +309,7 @@ register_exploit_template("my_exploit", predicate, gen, priority=5)
 | 符号执行验证 | 支持 (angr 插件) | 不支持 | 不支持 | 不支持 |
 | 批量扫描 + JSON | 支持 (--dir + schema) | 不支持 | 不支持 | 不支持 |
 | 中文报告 | 支持 | 不支持 | 不支持 | 不支持 |
-| 单元测试 | 162 用例 | - | - | - |
+| 单元测试 | 177 用例 | - | - | - |
 
 ---
 
